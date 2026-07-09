@@ -34,6 +34,8 @@ export const api = {
   closeTerminal: (id: string) => rpc<void>('terminal.close', { id }),
 
   listWorkers: () => rpc<WorkerInfo[]>('worker.list'),
+  stopWorker: (id: string) => rpc<WorkerInfo>('worker.stop', { id }),
+  closeWorker: (id: string) => rpc<WorkerInfo>('worker.close', { id }),
   pendingWorkerRequests: () => rpc<WorkerRequest[]>('worker.pendingRequests'),
   resolveWorkerRequest: (decision: WorkerRequestDecision) =>
     rpc<void>('worker.resolveRequest', decision),

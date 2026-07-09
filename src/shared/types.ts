@@ -125,7 +125,7 @@ export type LayoutNode = TabsNode | SplitNode
 export type PanePosition = 'tab' | 'right' | 'down'
 
 /** Built-in block types that block.open can instantiate directly (no bundle) */
-export const BUILTIN_OPENABLE_BLOCKS = ['hello'] as const
+export const BUILTIN_OPENABLE_BLOCKS = ['hello', 'workers'] as const
 
 /** Manifest of a user/agent-authored block (~/.airun9/blocks/<name>/block.json) */
 export interface BlockManifest {
