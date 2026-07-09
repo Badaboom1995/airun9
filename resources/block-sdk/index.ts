@@ -12,16 +12,25 @@ let nextId = 1
 const pending = new Map<number, Pending>()
 const listeners = new Map<string, Set<(payload: unknown) => void>>()
 
-/** Wait for the host handshake. Called by the generated bootstrap. */
+/**
+ * Handshake with the host. The block announces readiness (retrying, so no
+ * load-order race is possible) and the host answers with a MessagePort.
+ * Called by the generated bootstrap.
+ */
 export function __connect(): Promise<void> {
   return new Promise((resolve) => {
-    window.addEventListener('message', function onInit(event: MessageEvent) {
+    const onInit = (event: MessageEvent): void => {
       if (event.data?.type !== 'airun9:init' || !event.ports[0]) return
       window.removeEventListener('message', onInit)
+      clearInterval(announceTimer)
       port = event.ports[0]
       port.onmessage = onPortMessage
       resolve()
-    })
+    }
+    window.addEventListener('message', onInit)
+    const announce = (): void => window.parent.postMessage({ type: 'airun9:ready' }, '*')
+    const announceTimer = setInterval(announce, 100)
+    announce()
   })
 }
 

@@ -62,7 +62,8 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
     }
   }, [name, version])
 
-  // handshake + message bridge, re-established on every iframe (re)load
+  // handshake + message bridge: the block pings 'ready' until we answer
+  // with a port, so no iframe load-order race is possible
   useEffect(() => {
     const iframe = iframeRef.current
     if (!iframe || !srcdoc || !granted) return
@@ -70,7 +71,9 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
     const subscriptions: Array<() => void> = []
     let port: MessagePort | null = null
 
-    const onLoad = (): void => {
+    const onReady = (readyEvent: MessageEvent): void => {
+      if (readyEvent.source !== iframe.contentWindow) return
+      if (readyEvent.data?.type !== 'airun9:ready' || port) return
       const channel = new MessageChannel()
       port = channel.port1
       port.onmessage = (event: MessageEvent) => {
@@ -105,9 +108,9 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
       iframe.contentWindow?.postMessage({ type: 'airun9:init' }, '*', [channel.port2])
     }
 
-    iframe.addEventListener('load', onLoad)
+    window.addEventListener('message', onReady)
     return () => {
-      iframe.removeEventListener('load', onLoad)
+      window.removeEventListener('message', onReady)
       subscriptions.forEach((off) => off())
       port?.close()
     }
