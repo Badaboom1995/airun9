@@ -1,0 +1,43 @@
+#!/bin/bash
+# AIRUN9 shim (ADR-0007 progressive enhancement, ADR-0008 discovery):
+# this bin dir is first on PATH in every managed terminal, so `claude`
+# resolves here. We exec the next claude on PATH with an appended system
+# prompt that teaches the session about the airun9 API.
+#
+# Other tools (e.g. Superset) wrap claude the same way and may resolve
+# "the real claude" back to us, so two env guards prevent loops:
+#   AIRUN9_SHIM_SEEN     — wrappers already hopped through (skip them)
+#   AIRUN9_SHIM_INJECTED — the prompt was already appended (append once)
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+seen="${AIRUN9_SHIM_SEEN:-}"
+is_seen() { case ":$seen:" in *":$1:"*) return 0 ;; *) return 1 ;; esac }
+
+real=""
+IFS=':' read -ra path_dirs <<< "$PATH"
+for dir in "${path_dirs[@]}"; do
+  candidate="${dir%/}/claude"
+  [ -x "$candidate" ] && [ ! -d "$candidate" ] || continue
+  # skip ourselves by identity (handles symlinks/duplicate PATH entries)
+  [ "$candidate" -ef "${BASH_SOURCE[0]}" ] && continue
+  is_seen "$candidate" && continue
+  real="$candidate"
+  break
+done
+
+if [ -z "$real" ]; then
+  echo "airun9: claude not found on PATH (install Claude Code to use agent sessions)" >&2
+  exit 127
+fi
+
+export AIRUN9_SHIM_SEEN="${seen:+$seen:}$real"
+
+if [ -z "${AIRUN9_SHIM_INJECTED:-}" ]; then
+  export AIRUN9_SHIM_INJECTED=1
+  # ours goes first so a user-supplied --append-system-prompt still wins
+  exec "$real" --append-system-prompt "$(cat "$SELF_DIR/airun9-agent-prompt.md")" "$@"
+fi
+
+exec "$real" "$@"
