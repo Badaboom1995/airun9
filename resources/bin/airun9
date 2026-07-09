@@ -1,0 +1,149 @@
+#!/usr/bin/env node
+/*
+ * airun9 — CLI door to the AIRUN9 public local API (ADR-0008).
+ * Speaks newline-delimited JSON-RPC over the app's Unix socket.
+ * Injected into the PATH of every managed terminal so agents can call it.
+ *
+ * Usage:
+ *   airun9 ping
+ *   airun9 project get
+ *   airun9 worker create --prompt "fix the login bug" [--name fix-login] [--count 3]
+ *   airun9 worker list
+ *   airun9 worker read <id> [--tail 20000] [--raw]
+ *   airun9 worker stop <id>
+ *   airun9 terminal list
+ *   airun9 terminal create [--cwd path] [--title name]
+ *   airun9 terminal read <id> [--tail 20000] [--raw]
+ */
+'use strict'
+
+const net = require('net')
+const os = require('os')
+const path = require('path')
+
+const SOCKET_PATH = process.env.AIRUN9_SOCKET || path.join(os.homedir(), '.airun9', 'airun9.sock')
+
+function fail(message) {
+  process.stderr.write(`airun9: ${message}\n`)
+  process.exit(1)
+}
+
+function parseArgs(argv) {
+  const positional = []
+  const flags = {}
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2)
+      const next = argv[i + 1]
+      if (next === undefined || next.startsWith('--')) {
+        flags[key] = true
+      } else {
+        flags[key] = next
+        i++
+      }
+    } else {
+      positional.push(arg)
+    }
+  }
+  return { positional, flags }
+}
+
+function call(method, params) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const socket = net.createConnection(SOCKET_PATH)
+    let buffer = ''
+    socket.on('connect', () => {
+      socket.write(JSON.stringify({ id: 1, method, params }) + '\n')
+    })
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8')
+      const newline = buffer.indexOf('\n')
+      if (newline === -1) return
+      socket.end()
+      try {
+        const response = JSON.parse(buffer.slice(0, newline))
+        if (response.error) rejectPromise(new Error(response.error.message))
+        else resolvePromise(response.result)
+      } catch (error) {
+        rejectPromise(error)
+      }
+    })
+    socket.on('error', (error) => {
+      if (error.code === 'ENOENT' || error.code === 'ECONNREFUSED') {
+        rejectPromise(new Error(`cannot reach AIRUN9 at ${SOCKET_PATH} — is the app running?`))
+      } else {
+        rejectPromise(error)
+      }
+    })
+  })
+}
+
+// Strip ANSI escape sequences so agents get readable text by default
+function stripAnsi(text) {
+  return text
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)?/g, '') // OSC (title set, hyperlinks)
+    .replace(/\x1b\[[0-9;?]*[A-Za-z@^`~]/g, '') // CSI (colors, cursor movement)
+    .replace(/\x1b[()#][0-9A-Za-z]/g, '') // charset selection
+    .replace(/\x1b[A-Za-z=><]/g, '') // bare escapes
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+}
+
+function printResult(result) {
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+}
+
+function printRead(result, flags) {
+  process.stdout.write(flags.raw ? result.data : stripAnsi(result.data))
+  if (result.data && !result.data.endsWith('\n')) process.stdout.write('\n')
+}
+
+async function main() {
+  const { positional, flags } = parseArgs(process.argv.slice(2))
+  const [domain, action, id] = positional
+  const tail = flags.tail ? Number(flags.tail) : undefined
+
+  switch (`${domain} ${action}`) {
+    case 'ping undefined':
+      return printResult(await call('app.ping'))
+    case 'project get':
+      return printResult(await call('project.get'))
+    case 'worker create': {
+      if (!flags.prompt || flags.prompt === true) fail('worker create requires --prompt "..."')
+      const params = { prompt: flags.prompt }
+      if (typeof flags.name === 'string') params.name = flags.name
+      if (flags.count) params.count = Number(flags.count)
+      return printResult(await call('worker.create', params))
+    }
+    case 'worker list':
+      return printResult(await call('worker.list'))
+    case 'worker get':
+      if (!id) fail('usage: airun9 worker get <id>')
+      return printResult(await call('worker.get', { id }))
+    case 'worker read':
+      if (!id) fail('usage: airun9 worker read <id>')
+      return printRead(await call('worker.read', { id, tail }), flags)
+    case 'worker stop':
+      if (!id) fail('usage: airun9 worker stop <id>')
+      return printResult(await call('worker.stop', { id }))
+    case 'terminal list':
+      return printResult(await call('terminal.list'))
+    case 'terminal create': {
+      const params = {}
+      if (typeof flags.cwd === 'string') params.cwd = flags.cwd
+      if (typeof flags.title === 'string') params.title = flags.title
+      return printResult(await call('terminal.create', params))
+    }
+    case 'terminal read':
+      if (!id) fail('usage: airun9 terminal read <id>')
+      return printRead(await call('terminal.read', { id, tail }), flags)
+    default:
+      fail(
+        `unknown command "${positional.join(' ')}"\n` +
+          'commands: ping | project get | worker create|list|get|read|stop | terminal list|create|read'
+      )
+  }
+}
+
+main().catch((error) => fail(error.message))

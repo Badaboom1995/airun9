@@ -1,13 +1,72 @@
-import { app, shell, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import type { ProjectInfo } from '../shared/types'
+import { TerminalManager } from './terminals'
+import { WorkerManager } from './workers'
+import { buildApi, dispatch } from './api'
+import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
+
+let currentProject: ProjectInfo | null = null
+
+// Managed terminals get the airun9 CLI on PATH and the socket path in env,
+// so any agent running inside can call the public API (ADR-0008).
+const cliBinDir = is.dev
+  ? join(app.getAppPath(), 'resources', 'bin')
+  : join(process.resourcesPath, 'bin')
+
+const terminals = new TerminalManager(() => ({
+  AIRUN9_SOCKET: SOCKET_PATH,
+  PATH: `${cliBinDir}:${process.env.PATH ?? ''}`
+}))
+const workers = new WorkerManager(terminals)
+
+const api = buildApi({
+  terminals,
+  workers,
+  getProject: () => currentProject,
+  setProject: (project) => {
+    currentProject = project
+  }
+})
+
+const socketServer = startSocketServer(api)
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(channel, payload)
+  }
+}
+
+terminals.on('created', (info) => broadcast('terminal:created', info))
+terminals.on('data', (event) => broadcast('terminal:data', event))
+terminals.on('exit', (event) => broadcast('terminal:exit', event))
+terminals.on('closed', (event) => broadcast('terminal:closed', event))
+workers.on('created', (worker) => broadcast('worker:created', worker))
+workers.on('updated', (worker) => broadcast('worker:updated', worker))
+
+ipcMain.handle('rpc', async (_event, method: string, params: unknown) => {
+  try {
+    return { result: await dispatch(api, method, params) }
+  } catch (error) {
+    return { error: { message: error instanceof Error ? error.message : String(error) } }
+  }
+})
+
+ipcMain.handle('dialog:openDirectory', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Open project'
+  })
+  return canceled ? null : filePaths[0]
+})
 
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1280,
+    height: 800,
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
@@ -58,9 +117,6 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
-
   createWindow()
 
   app.on('activate', function () {
@@ -68,6 +124,11 @@ app.whenReady().then(() => {
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  terminals.disposeAll()
+  stopSocketServer(socketServer)
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -78,6 +139,3 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.

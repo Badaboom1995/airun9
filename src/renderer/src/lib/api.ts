@@ -1,0 +1,42 @@
+import type {
+  ProjectInfo,
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalInfo,
+  TerminalSnapshot,
+  WorkerInfo
+} from '../../../shared/types'
+
+async function rpc<T>(method: string, params?: unknown): Promise<T> {
+  const response = await window.api.rpc(method, params)
+  if (response.error) throw new Error(response.error.message)
+  return response.result as T
+}
+
+export const api = {
+  openProject: (path: string) => rpc<ProjectInfo>('project.open', { path }),
+  getProject: () => rpc<ProjectInfo | null>('project.get'),
+
+  createTerminal: (options?: { cwd?: string; title?: string }) =>
+    rpc<TerminalInfo>('terminal.create', options ?? {}),
+  listTerminals: () => rpc<TerminalInfo[]>('terminal.list'),
+  snapshotTerminal: (id: string) => rpc<TerminalSnapshot>('terminal.snapshot', { id }),
+  writeTerminal: (id: string, data: string) => rpc<void>('terminal.write', { id, data }),
+  resizeTerminal: (id: string, cols: number, rows: number) =>
+    rpc<void>('terminal.resize', { id, cols, rows }),
+  closeTerminal: (id: string) => rpc<void>('terminal.close', { id }),
+
+  listWorkers: () => rpc<WorkerInfo[]>('worker.list')
+}
+
+/** Typed wrappers over the preload event bridge */
+export const events = {
+  onTerminalCreated: (cb: (info: TerminalInfo) => void) =>
+    window.api.on('terminal:created', cb as (payload: unknown) => void),
+  onTerminalData: (cb: (event: TerminalDataEvent) => void) =>
+    window.api.on('terminal:data', cb as (payload: unknown) => void),
+  onTerminalExit: (cb: (event: TerminalExitEvent) => void) =>
+    window.api.on('terminal:exit', cb as (payload: unknown) => void),
+  onTerminalClosed: (cb: (event: { id: string }) => void) =>
+    window.api.on('terminal:closed', cb as (payload: unknown) => void)
+}
