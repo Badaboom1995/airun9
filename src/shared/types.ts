@@ -91,6 +91,63 @@ export interface TerminalExitEvent {
   exitCode: number
 }
 
+/**
+ * Layout is pure serialized data (ADR-0001): a split tree whose leaves are
+ * tab groups of block instances. Main owns it; renderer renders it; agents
+ * edit it via layout.get/set.
+ */
+export interface LayoutTabItem {
+  id: string
+  /** block type in the registry: 'terminal', 'custom', ... */
+  block: string
+  config: Record<string, unknown>
+}
+
+export interface TabsNode {
+  type: 'tabs'
+  id: string
+  active: string | null
+  items: LayoutTabItem[]
+}
+
+export interface SplitNode {
+  type: 'split'
+  id: string
+  direction: 'row' | 'column'
+  /** one entry per child, sums to ~1 */
+  ratios: number[]
+  children: LayoutNode[]
+}
+
+export type LayoutNode = TabsNode | SplitNode
+
+/** Where block.open places a new pane */
+export type PanePosition = 'tab' | 'right' | 'down'
+
+/** Manifest of a user/agent-authored block (~/.airun9/blocks/<name>/block.json) */
+export interface BlockManifest {
+  name: string
+  title?: string
+  /** API methods the block may call; undeclared methods are always denied */
+  capabilities: string[]
+}
+
+export interface BlockInfo {
+  name: string
+  manifest: BlockManifest
+  /** compile error, if the last build failed */
+  error: string | null
+}
+
+/** Pending "grant this block its capabilities" decision */
+export interface BlockGrantRequest {
+  id: string
+  blockName: string
+  title: string
+  /** the mutating subset that needs explicit approval */
+  capabilities: string[]
+}
+
 /** Renderer push channels (webContents.send) */
 export const EVENT_CHANNELS = [
   'terminal:created',
@@ -100,7 +157,12 @@ export const EVENT_CHANNELS = [
   'worker:created',
   'worker:updated',
   'worker:request',
-  'worker:request-resolved'
+  'worker:request-resolved',
+  'layout:changed',
+  'blocks:changed',
+  'block:updated',
+  'block:grant-request',
+  'block:grant-resolved'
 ] as const
 
 export type EventChannel = (typeof EVENT_CHANNELS)[number]

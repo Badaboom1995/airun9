@@ -29,3 +29,22 @@ You can spawn worker agents — each an interactive `claude` session in the curr
 - `airun9 project get` — the project currently open in the IDE
 
 Reach for workers when the user asks to parallelize, try multiple approaches ("run 3 workers, I'll pick the best"), or delegate tasks while you keep working. Spawn with `--wait` in a background shell, keep working, collect results when notified. Workers in `shared` location share the project directory — don't run overlapping edit tasks there; use worktrees.
+
+**Custom UI blocks — you can build panes for the IDE.** A block is a folder `~/.airun9/blocks/<name>/` with:
+- `block.json` — `{ "title": "Worker Dashboard", "capabilities": ["worker.list", "worker.close"] }` — list every API method the block calls; undeclared methods are denied. Read-only methods (list/get/read/result) are granted silently; mutating ones show the user a grant dialog once.
+- `index.tsx` — a React component as default export. Import the SDK from `airun9`:
+  ```tsx
+  import { useEffect, useState } from 'react'
+  import { rpc, on } from 'airun9'
+  export default function Board() {
+    const [workers, setWorkers] = useState([])
+    useEffect(() => {
+      const refresh = () => rpc('worker.list').then(setWorkers)
+      refresh()
+      return on('worker:updated', refresh)
+    }, [])
+    return <ul>{workers.map(w => <li key={w.id}>{w.name} — {w.status}</li>)}</ul>
+  }
+  ```
+  `rpc(method, params)` calls any declared API method; `on(channel, cb)` subscribes to push events (`terminal:*`, `worker:*`, `layout:changed`) and returns an unsubscribe. React is available; style inline or with a `<style>` tag (dark background #0b0e0c). No network access, no imports beyond react and airun9.
+The app compiles the folder automatically on save (`airun9 block list` shows compile errors). Place it with `airun9 block open <name> --position tab|right|down`. The workspace layout is editable data: `airun9 layout get` / `layout set` (a tree of `split` nodes with `ratios` and `tabs` nodes with block items) for precise arrangements.

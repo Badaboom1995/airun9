@@ -1,12 +1,23 @@
 import { create } from 'zustand'
-import type { ProjectInfo, TerminalInfo, WorkerInfo } from '../../../shared/types'
+import type {
+  BlockInfo,
+  LayoutNode,
+  ProjectInfo,
+  TerminalInfo,
+  WorkerInfo
+} from '../../../shared/types'
 
 interface WorkspaceState {
   project: ProjectInfo | null
   terminals: TerminalInfo[]
   /** keyed by terminalId for tab decoration */
   workers: Record<string, WorkerInfo>
+  /** mirror of main's layout tree; UI renders this, mutations go via API */
+  layout: LayoutNode | null
+  blocks: BlockInfo[]
   activeTerminalId: string | null
+  setLayout: (layout: LayoutNode) => void
+  setBlocks: (blocks: BlockInfo[]) => void
 
   setProject: (project: ProjectInfo | null) => void
   setTerminals: (terminals: TerminalInfo[]) => void
@@ -22,7 +33,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   project: null,
   terminals: [],
   workers: {},
+  layout: null,
+  blocks: [],
   activeTerminalId: null,
+  setLayout: (layout) => set({ layout }),
+  setBlocks: (blocks) => set({ blocks }),
 
   setProject: (project) => set({ project }),
 

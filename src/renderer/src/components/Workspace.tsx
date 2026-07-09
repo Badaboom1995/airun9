@@ -1,102 +1,61 @@
 import { useEffect } from 'react'
-import { IconPlus, IconRobot, IconX } from '@tabler/icons-react'
-import type { TerminalInfo, WorkerInfo } from '../../../shared/types'
 import { api, events } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
-import TerminalView from './TerminalView'
+import LayoutRenderer from './LayoutRenderer'
 import WorkerApprovalModal from './WorkerApprovalModal'
+import BlockGrantModal from './BlockGrantModal'
 
 // Survives StrictMode double-mount: only ever auto-create the first terminal once
 let bootstrapped = false
 
-const WORKER_STATUS_COLOR: Record<string, string> = {
-  running: 'text-emerald-400',
-  done: 'text-amber-400',
-  exited: 'text-neutral-600'
-}
-
-function TabLabel({
-  terminal,
-  worker
-}: {
-  terminal: TerminalInfo
-  worker?: WorkerInfo
-}): React.JSX.Element {
-  return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {terminal.workerId && (
-        <IconRobot
-          className={`size-3.5 shrink-0 ${WORKER_STATUS_COLOR[worker?.status ?? 'exited']}`}
-          stroke={1.75}
-        />
-      )}
-      <span
-        className={`truncate text-[12px] ${
-          terminal.status === 'exited' ? 'text-neutral-600 line-through' : ''
-        }`}
-      >
-        {terminal.title}
-      </span>
-    </span>
-  )
-}
-
 function Workspace(): React.JSX.Element {
   const project = useWorkspaceStore((s) => s.project)
-  const terminals = useWorkspaceStore((s) => s.terminals)
-  const workers = useWorkspaceStore((s) => s.workers)
-  const activeTerminalId = useWorkspaceStore((s) => s.activeTerminalId)
+  const layout = useWorkspaceStore((s) => s.layout)
   const {
     setTerminals,
     upsertTerminal,
     removeTerminal,
     markTerminalExited,
-    setActiveTerminal,
     setWorkers,
-    upsertWorker
+    upsertWorker,
+    setLayout,
+    setBlocks
   } = useWorkspaceStore.getState()
 
   useEffect(() => {
     // Subscribe before fetching so nothing created in between is missed
-    const offCreated = events.onTerminalCreated((info) => upsertTerminal(info))
-    const offClosed = events.onTerminalClosed(({ id }) => removeTerminal(id))
-    const offExit = events.onTerminalExit(({ id, exitCode }) => markTerminalExited(id, exitCode))
-    const offWorkerCreated = events.onWorkerCreated((worker) => upsertWorker(worker))
-    const offWorkerUpdated = events.onWorkerUpdated((worker) => upsertWorker(worker))
+    const offs = [
+      events.onTerminalCreated(upsertTerminal),
+      events.onTerminalClosed(({ id }) => removeTerminal(id)),
+      events.onTerminalExit(({ id, exitCode }) => markTerminalExited(id, exitCode)),
+      events.onWorkerCreated(upsertWorker),
+      events.onWorkerUpdated(upsertWorker),
+      events.onLayoutChanged(setLayout),
+      events.onBlocksChanged(setBlocks)
+    ]
 
+    void api.getLayout().then(setLayout)
+    void api.listWorkers().then(setWorkers)
+    void api.listBlocks().then(setBlocks)
     void api.listTerminals().then((list) => {
       setTerminals(list)
       if (list.length === 0 && !bootstrapped) {
         bootstrapped = true
-        void api.createTerminal().then((info) => setActiveTerminal(info.id))
+        void api.createTerminal()
       }
     })
-    void api.listWorkers().then(setWorkers)
 
-    return () => {
-      offCreated()
-      offClosed()
-      offExit()
-      offWorkerCreated()
-      offWorkerUpdated()
-    }
+    return () => offs.forEach((off) => off())
   }, [
     markTerminalExited,
     removeTerminal,
-    setActiveTerminal,
+    setBlocks,
+    setLayout,
     setTerminals,
     setWorkers,
     upsertTerminal,
     upsertWorker
   ])
-
-  const createTerminal = (): void => {
-    void api.createTerminal().then((info) => setActiveTerminal(info.id))
-  }
-
-  const closeTerminal = (id: string): void => {
-    void api.closeTerminal(id)
-  }
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0e0c] text-neutral-200 antialiased">
@@ -110,56 +69,17 @@ function Workspace(): React.JSX.Element {
         <span className="truncate text-[11px] text-neutral-700">{project?.path}</span>
       </div>
 
-      {/* terminal tabs */}
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-white/[0.06] px-2">
-        {terminals.map((terminal) => (
-          <div
-            key={terminal.id}
-            className={`group flex h-7 max-w-48 cursor-pointer items-center gap-1 rounded-md px-2.5 transition-colors ${
-              terminal.id === activeTerminalId
-                ? 'bg-white/[0.08] text-neutral-100'
-                : 'text-neutral-400 hover:bg-white/[0.04]'
-            }`}
-            onClick={() => setActiveTerminal(terminal.id)}
-          >
-            <TabLabel terminal={terminal} worker={workers[terminal.id]} />
-            <button
-              type="button"
-              className="ml-0.5 rounded p-0.5 text-neutral-600 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/[0.08] hover:text-neutral-300"
-              onClick={(event) => {
-                event.stopPropagation()
-                closeTerminal(terminal.id)
-              }}
-            >
-              <IconX className="size-3" stroke={2} />
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
-          onClick={createTerminal}
-          title="New terminal"
-        >
-          <IconPlus className="size-4" stroke={1.75} />
-        </button>
-      </div>
-
-      {/* terminal area — all mounted, one visible, so tab switches are instant */}
+      {/* the layout tree is the workspace (ADR-0001) */}
       <div className="relative min-h-0 flex-1">
-        {terminals.length === 0 && (
+        {layout ? (
+          <LayoutRenderer node={layout} first />
+        ) : (
           <div className="flex h-full items-center justify-center text-[13px] text-neutral-600">
-            No terminals — create one with the + button
+            Loading workspace…
           </div>
         )}
-        {terminals.map((terminal) => (
-          <TerminalView
-            key={terminal.id}
-            id={terminal.id}
-            active={terminal.id === activeTerminalId}
-          />
-        ))}
         <WorkerApprovalModal />
+        <BlockGrantModal />
       </div>
     </div>
   )

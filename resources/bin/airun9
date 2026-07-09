@@ -31,6 +31,11 @@
  *   airun9 worker close <id>                           # kill process AND remove the tab
  *   airun9 terminal list|create|read
  *   airun9 terminal close <id>                         # close a terminal tab
+ *
+ *   airun9 block list                                  # compiled custom blocks
+ *   airun9 block open <name> [--position tab|right|down]
+ *   airun9 layout get                                  # the workspace layout tree (JSON)
+ *   airun9 layout set --json '<tree>'                  # replace it (or pipe JSON on stdin)
  */
 'use strict'
 
@@ -232,10 +237,31 @@ async function main() {
     case 'terminal close':
       if (!id) fail('usage: airun9 terminal close <id>')
       return printResult(await call('terminal.close', { id }))
+    case 'block list':
+      return printResult(await call('block.list'))
+    case 'block open': {
+      if (!id) fail('usage: airun9 block open <name> [--position tab|right|down]')
+      const params = { name: id }
+      if (typeof flags.position === 'string') params.position = flags.position
+      return printResult(await call('block.open', params))
+    }
+    case 'layout get':
+      return printResult(await call('layout.get'))
+    case 'layout set': {
+      const raw = typeof flags.json === 'string' ? flags.json : await readStdin()
+      if (!raw.trim()) fail('layout set requires --json or JSON on stdin')
+      let layout
+      try {
+        layout = JSON.parse(raw)
+      } catch {
+        fail('layout set: invalid JSON')
+      }
+      return printResult(await call('layout.set', { layout }))
+    }
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close'
+          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close | block list|open | layout get|set'
       )
   }
 }

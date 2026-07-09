@@ -1,4 +1,9 @@
 import type {
+  BlockGrantRequest,
+  BlockInfo,
+  BlockManifest,
+  LayoutNode,
+  LayoutTabItem,
   ProjectInfo,
   TerminalDataEvent,
   TerminalExitEvent,
@@ -31,7 +36,24 @@ export const api = {
   listWorkers: () => rpc<WorkerInfo[]>('worker.list'),
   pendingWorkerRequests: () => rpc<WorkerRequest[]>('worker.pendingRequests'),
   resolveWorkerRequest: (decision: WorkerRequestDecision) =>
-    rpc<void>('worker.resolveRequest', decision)
+    rpc<void>('worker.resolveRequest', decision),
+
+  getLayout: () => rpc<LayoutNode>('layout.get'),
+  setLayoutActive: (tabsId: string, itemId: string) =>
+    rpc<void>('layout.setActive', { tabsId, itemId }),
+  setLayoutRatios: (splitId: string, ratios: number[]) =>
+    rpc<void>('layout.setRatios', { splitId, ratios }),
+  removeLayoutItem: (itemId: string) => rpc<void>('layout.removeItem', { itemId }),
+
+  listBlocks: () => rpc<BlockInfo[]>('block.list'),
+  blockBundle: (name: string) =>
+    rpc<{ code: string; manifest: BlockManifest }>('block.bundle', { name }),
+  blockGrant: (name: string) => rpc<{ granted: string[] }>('block.grant', { name }),
+  openBlock: (name: string, position?: 'tab' | 'right' | 'down') =>
+    rpc<LayoutTabItem>('block.open', { name, position }),
+  pendingBlockGrants: () => rpc<BlockGrantRequest[]>('block.pendingGrants'),
+  resolveBlockGrant: (requestId: string, approved: boolean) =>
+    rpc<void>('block.resolveGrant', { requestId, approved })
 }
 
 /** Typed wrappers over the preload event bridge */
@@ -51,5 +73,15 @@ export const events = {
   onWorkerRequest: (cb: (request: WorkerRequest) => void) =>
     window.api.on('worker:request', cb as (payload: unknown) => void),
   onWorkerRequestResolved: (cb: (event: { requestId: string; approved: boolean }) => void) =>
-    window.api.on('worker:request-resolved', cb as (payload: unknown) => void)
+    window.api.on('worker:request-resolved', cb as (payload: unknown) => void),
+  onLayoutChanged: (cb: (layout: LayoutNode) => void) =>
+    window.api.on('layout:changed', cb as (payload: unknown) => void),
+  onBlocksChanged: (cb: (blocks: BlockInfo[]) => void) =>
+    window.api.on('blocks:changed', cb as (payload: unknown) => void),
+  onBlockUpdated: (cb: (event: { name: string }) => void) =>
+    window.api.on('block:updated', cb as (payload: unknown) => void),
+  onBlockGrantRequest: (cb: (request: BlockGrantRequest) => void) =>
+    window.api.on('block:grant-request', cb as (payload: unknown) => void),
+  onBlockGrantResolved: (cb: (event: { requestId: string; approved: boolean }) => void) =>
+    window.api.on('block:grant-resolved', cb as (payload: unknown) => void)
 }

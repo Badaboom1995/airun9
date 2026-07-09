@@ -5,6 +5,8 @@ import icon from '../../resources/icon.png?asset'
 import type { ProjectInfo } from '../shared/types'
 import { TerminalManager } from './terminals'
 import { WorkerManager } from './workers'
+import { LayoutManager } from './layout'
+import { BlocksManager } from './blocks'
 import { buildApi, dispatch } from './api'
 import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
 import { zshBootstrapEnv } from './shell-env'
@@ -25,10 +27,27 @@ const terminals = new TerminalManager(() => ({
   ...zshBootstrapEnv(cliBinDir)
 }))
 const workers = new WorkerManager(terminals, cliBinDir)
+const layout = new LayoutManager()
+const blocks = new BlocksManager(
+  is.dev
+    ? join(app.getAppPath(), 'resources', 'block-sdk', 'index.ts')
+    : join(process.resourcesPath, 'block-sdk', 'index.ts'),
+  join(app.getAppPath(), 'node_modules')
+)
+
+// terminals are panes: their lifecycle maintains the layout tree
+terminals.on('created', (info) => {
+  layout.addItem({ block: 'terminal', config: { terminalId: info.id } })
+})
+terminals.on('closed', ({ id }) => {
+  layout.removeWhere((item) => item.block === 'terminal' && item.config.terminalId === id)
+})
 
 const api = buildApi({
   terminals,
   workers,
+  layout,
+  blocks,
   getProject: () => currentProject,
   setProject: (project) => {
     currentProject = project
@@ -51,6 +70,11 @@ workers.on('created', (worker) => broadcast('worker:created', worker))
 workers.on('updated', (worker) => broadcast('worker:updated', worker))
 workers.on('request', (request) => broadcast('worker:request', request))
 workers.on('request-resolved', (resolution) => broadcast('worker:request-resolved', resolution))
+layout.on('changed', (root) => broadcast('layout:changed', root))
+blocks.on('changed', (list) => broadcast('blocks:changed', list))
+blocks.on('updated', (event) => broadcast('block:updated', event))
+blocks.on('grant-request', (request) => broadcast('block:grant-request', request))
+blocks.on('grant-resolved', (resolution) => broadcast('block:grant-resolved', resolution))
 
 ipcMain.handle('rpc', async (_event, method: string, params: unknown) => {
   try {
@@ -134,6 +158,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   terminals.disposeAll()
+  blocks.dispose()
   stopSocketServer(socketServer)
 })
 

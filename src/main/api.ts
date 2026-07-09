@@ -2,9 +2,11 @@ import { existsSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { z } from 'zod'
-import type { ProjectInfo } from '../shared/types'
+import type { LayoutNode, ProjectInfo } from '../shared/types'
 import type { TerminalManager } from './terminals'
 import type { WorkerManager } from './workers'
+import type { LayoutManager } from './layout'
+import type { BlocksManager } from './blocks'
 
 /**
  * The internal API: one dispatcher, many doors (ADR-0008). The renderer
@@ -15,6 +17,8 @@ import type { WorkerManager } from './workers'
 export interface ApiContext {
   terminals: TerminalManager
   workers: WorkerManager
+  layout: LayoutManager
+  blocks: BlocksManager
   getProject: () => ProjectInfo | null
   setProject: (project: ProjectInfo) => void
 }
@@ -153,7 +157,56 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       return ctx.workers.read(id, tail)
     },
     'worker.stop': (params) => ctx.workers.stop(idParam.parse(params).id),
-    'worker.close': (params) => ctx.workers.close(idParam.parse(params).id)
+    'worker.close': (params) => ctx.workers.close(idParam.parse(params).id),
+
+    // layout is data (ADR-0001); structural integrity checked by LayoutManager
+    'layout.get': () => ctx.layout.get(),
+    'layout.set': (params) => {
+      const { layout } = z.object({ layout: z.unknown() }).parse(params)
+      return ctx.layout.set(layout as LayoutNode)
+    },
+    'layout.setActive': (params) => {
+      const { tabsId, itemId } = z.object({ tabsId: z.string(), itemId: z.string() }).parse(params)
+      ctx.layout.setActive(tabsId, itemId)
+      return { ok: true }
+    },
+    'layout.setRatios': (params) => {
+      const { splitId, ratios } = z
+        .object({ splitId: z.string(), ratios: z.array(z.number().positive()) })
+        .parse(params)
+      ctx.layout.setRatios(splitId, ratios)
+      return { ok: true }
+    },
+    'layout.removeItem': (params) => {
+      const { itemId } = z.object({ itemId: z.string() }).parse(params)
+      ctx.layout.removeItem(itemId)
+      return { ok: true }
+    },
+
+    'block.list': () => ctx.blocks.list(),
+    'block.bundle': (params) => {
+      const { name } = z.object({ name: z.string() }).parse(params)
+      return ctx.blocks.bundle(name)
+    },
+    'block.open': (params) => {
+      const { name, position } = z
+        .object({ name: z.string(), position: z.enum(['tab', 'right', 'down']).default('tab') })
+        .parse(params)
+      ctx.blocks.bundle(name) // throws early if unknown or broken
+      return ctx.layout.addItem({ block: 'custom', config: { name } }, position)
+    },
+    'block.grant': (params) => {
+      const { name } = z.object({ name: z.string() }).parse(params)
+      return ctx.blocks.grant(name)
+    },
+    'block.pendingGrants': () => ctx.blocks.pendingGrantRequests(),
+    'block.resolveGrant': (params) => {
+      const { requestId, approved } = z
+        .object({ requestId: z.string(), approved: z.boolean() })
+        .parse(params)
+      ctx.blocks.resolveGrant(requestId, approved)
+      return { ok: true }
+    }
   }
 }
 
