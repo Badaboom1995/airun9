@@ -27,8 +27,10 @@
  *   airun9 worker read <id> [--tail 20000] [--raw]     # live terminal tail
  *   airun9 worker result <id>                          # final answer (clean text)
  *   airun9 worker prompt <id> --prompt "..."           # follow-up (worker must be done)
- *   airun9 worker stop <id>
+ *   airun9 worker stop <id>                            # kill process, keep the tab
+ *   airun9 worker close <id>                           # kill process AND remove the tab
  *   airun9 terminal list|create|read
+ *   airun9 terminal close <id>                         # close a terminal tab
  */
 'use strict'
 
@@ -213,6 +215,9 @@ async function main() {
     case 'worker stop':
       if (!id) fail('usage: airun9 worker stop <id>')
       return printResult(await call('worker.stop', { id }))
+    case 'worker close':
+      if (!id) fail('usage: airun9 worker close <id>')
+      return printResult(await call('worker.close', { id }))
     case 'terminal list':
       return printResult(await call('terminal.list'))
     case 'terminal create': {
@@ -224,10 +229,13 @@ async function main() {
     case 'terminal read':
       if (!id) fail('usage: airun9 terminal read <id>')
       return printRead(await call('terminal.read', { id, tail }), flags)
+    case 'terminal close':
+      if (!id) fail('usage: airun9 terminal close <id>')
+      return printResult(await call('terminal.close', { id }))
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop | terminal list|create|read'
+          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close'
       )
   }
 }

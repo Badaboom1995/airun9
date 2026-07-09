@@ -152,7 +152,8 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       const { id, tail } = readParams.parse(params)
       return ctx.workers.read(id, tail)
     },
-    'worker.stop': (params) => ctx.workers.stop(idParam.parse(params).id)
+    'worker.stop': (params) => ctx.workers.stop(idParam.parse(params).id),
+    'worker.close': (params) => ctx.workers.close(idParam.parse(params).id)
   }
 }
 

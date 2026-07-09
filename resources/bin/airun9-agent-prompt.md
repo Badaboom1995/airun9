@@ -23,8 +23,9 @@ You can spawn worker agents — each an interactive `claude` session in the curr
 - `airun9 worker result <id>` — the worker's final answer as clean text (available once it is done)
 - `airun9 worker read <id> [--tail <chars>]` — live tail of its terminal (screen rendering; prefer `result` for finished work)
 - `airun9 worker prompt <id> --prompt "..."` — send a follow-up to a done worker (session continues with full context)
-- `airun9 worker stop <id>` — kill a worker
-- `airun9 terminal list` / `airun9 terminal create [--cwd <dir>] [--title <name>]` / `airun9 terminal read <terminalId>`
+- `airun9 worker stop <id>` — kill a worker (its tab stays, showing the dead session)
+- `airun9 worker close <id>` — kill a worker AND remove its tab (use when the user asks to close/clean up an agent)
+- `airun9 terminal list` / `airun9 terminal create [--cwd <dir>] [--title <name>]` / `airun9 terminal read <terminalId>` / `airun9 terminal close <terminalId>`
 - `airun9 project get` — the project currently open in the IDE
 
 Reach for workers when the user asks to parallelize, try multiple approaches ("run 3 workers, I'll pick the best"), or delegate tasks while you keep working. Spawn with `--wait` in a background shell, keep working, collect results when notified. Workers in `shared` location share the project directory — don't run overlapping edit tasks there; use worktrees.

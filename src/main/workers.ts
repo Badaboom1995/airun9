@@ -257,6 +257,21 @@ export class WorkerManager extends EventEmitter {
     return worker
   }
 
+  /** Stop the worker AND remove its terminal tab from the workspace */
+  close(id: string): WorkerInfo {
+    const worker = this.get(id)
+    try {
+      this.terminals.close(worker.terminalId)
+    } catch {
+      // terminal already gone; still mark the worker exited below
+    }
+    if (worker.status !== 'exited') {
+      worker.status = 'exited'
+      this.emit('updated', worker)
+    }
+    return worker
+  }
+
   private async spawn(options: {
     prompt: string
     name: string
