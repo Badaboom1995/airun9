@@ -172,6 +172,26 @@ export class WorkerManager extends EventEmitter {
     this.emit('updated', worker)
   }
 
+  /**
+   * Resolves when every listed worker has left `running` (done or exited).
+   * Event-driven — this is what lets agents wait via a background shell
+   * task instead of polling `worker list`.
+   */
+  wait(ids: string[]): Promise<WorkerInfo[]> {
+    const pending = new Set(ids.filter((id) => this.get(id).status === 'running'))
+    if (pending.size === 0) return Promise.resolve(ids.map((id) => this.get(id)))
+    return new Promise((resolve) => {
+      const onUpdated = (worker: WorkerInfo): void => {
+        if (worker.status !== 'running') pending.delete(worker.id)
+        if (pending.size === 0) {
+          this.off('updated', onUpdated)
+          resolve(ids.map((id) => this.get(id)))
+        }
+      }
+      this.on('updated', onUpdated)
+    })
+  }
+
   /** Continue an idle worker's session (keep-alive follow-ups) */
   prompt(id: string, text: string): WorkerInfo {
     const worker = this.get(id)

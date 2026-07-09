@@ -137,6 +137,14 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       const { id, prompt } = z.object({ id: z.string(), prompt: z.string().min(1) }).parse(params)
       return ctx.workers.prompt(id, prompt)
     },
+    'worker.wait': async (params) => {
+      const { ids } = z.object({ ids: z.array(z.string()).min(1) }).parse(params)
+      const workers = await ctx.workers.wait(ids)
+      return workers.map((worker) => ({
+        ...worker,
+        result: ctx.workers.result(worker.id).text
+      }))
+    },
     'worker.result': (params) => ctx.workers.result(idParam.parse(params).id),
     'worker.list': () => ctx.workers.list(),
     'worker.get': (params) => ctx.workers.get(idParam.parse(params).id),

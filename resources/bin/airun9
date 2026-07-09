@@ -8,14 +8,20 @@
  *   airun9 ping
  *   airun9 project get
  *
- *   # read-only research worker, spawns immediately
- *   airun9 worker scout --prompt "..." [--name x] [--count N]
+ *   # read-only research worker, spawns immediately.
+ *   # --wait blocks until it finishes and prints the results (run this as a
+ *   # background shell task to stay free — no polling).
+ *   airun9 worker scout --prompt "..." [--name x] [--count N] [--wait]
  *
  *   # mutating worker: the USER approves mode + location in the app.
  *   # This call waits for their decision (may take a while; poll
  *   # `worker list` if your call times out — it may still be approved).
+ *   # --wait additionally blocks until the work is finished.
  *   airun9 worker request --prompt "..." --recommend bypass|edits|manual \
- *     [--location shared|worktree] [--reason "why this mode"] [--name x] [--count N]
+ *     [--location shared|worktree] [--reason "why this mode"] [--name x] [--count N] [--wait]
+ *
+ *   # block until workers leave "running", then print them with results
+ *   airun9 worker wait <id> [<id>...]
  *
  *   airun9 worker list
  *   airun9 worker read <id> [--tail 20000] [--raw]     # live terminal tail
@@ -155,7 +161,9 @@ async function main() {
       const params = { prompt: flags.prompt }
       if (typeof flags.name === 'string') params.name = flags.name
       if (flags.count) params.count = Number(flags.count)
-      return printResult(await call('worker.scout', params))
+      const workers = await call('worker.scout', params)
+      if (!flags.wait) return printResult(workers)
+      return printResult(await call('worker.wait', { ids: workers.map((w) => w.id) }))
     }
     case 'worker request': {
       if (!flags.prompt || flags.prompt === true) fail('worker request requires --prompt "..."')
@@ -170,7 +178,14 @@ async function main() {
       if (typeof flags.reason === 'string') params.reason = flags.reason
       if (flags.count) params.count = Number(flags.count)
       process.stderr.write('airun9: waiting for the user to approve in AIRUN9…\n')
-      return printResult(await call('worker.request', params))
+      const workers = await call('worker.request', params)
+      if (!flags.wait) return printResult(workers)
+      return printResult(await call('worker.wait', { ids: workers.map((w) => w.id) }))
+    }
+    case 'worker wait': {
+      const ids = positional.slice(2)
+      if (ids.length === 0) fail('usage: airun9 worker wait <id> [<id>...]')
+      return printResult(await call('worker.wait', { ids }))
     }
     case 'worker list':
       return printResult(await call('worker.list'))
@@ -212,7 +227,7 @@ async function main() {
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker scout|request|list|get|read|result|prompt|stop | terminal list|create|read'
+          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop | terminal list|create|read'
       )
   }
 }

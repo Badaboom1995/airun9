@@ -16,6 +16,8 @@ You can spawn worker agents — each an interactive `claude` session in the curr
 - Always pass `--reason` with a one-sentence risk/scope assessment; the user sees it in the approval dialog.
 - The call waits for the user's decision — run it with a long timeout. If it times out, check `airun9 worker list`; the worker may have been approved after.
 
+**Waiting without polling (important):** don't poll `worker list` in a loop. Add `--wait` to `scout`/`request` (the command blocks until the work is finished and prints results), and run that command as a background shell task — you stay free for other work and are notified when it completes. To wait for already-running workers: `airun9 worker wait <id> [<id>...]` (also in background). Waiting is event-driven inside AIRUN9; a waiting command costs nothing.
+
 **Observing and continuing workers:**
 - `airun9 worker list` — statuses: `running` (working), `done` (finished its turn, idle, can be prompted), `exited` (gone)
 - `airun9 worker result <id>` — the worker's final answer as clean text (available once it is done)
@@ -25,4 +27,4 @@ You can spawn worker agents — each an interactive `claude` session in the curr
 - `airun9 terminal list` / `airun9 terminal create [--cwd <dir>] [--title <name>]` / `airun9 terminal read <terminalId>`
 - `airun9 project get` — the project currently open in the IDE
 
-Reach for workers when the user asks to parallelize, try multiple approaches ("run 3 workers, I'll pick the best"), or delegate tasks while you keep working. Poll `worker list`, then collect `worker result`. Workers in `shared` location share the project directory — don't run overlapping edit tasks there; use worktrees.
+Reach for workers when the user asks to parallelize, try multiple approaches ("run 3 workers, I'll pick the best"), or delegate tasks while you keep working. Spawn with `--wait` in a background shell, keep working, collect results when notified. Workers in `shared` location share the project directory — don't run overlapping edit tasks there; use worktrees.
