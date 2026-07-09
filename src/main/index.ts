@@ -7,6 +7,7 @@ import { TerminalManager } from './terminals'
 import { WorkerManager } from './workers'
 import { buildApi, dispatch } from './api'
 import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
+import { zshBootstrapEnv } from './shell-env'
 
 let currentProject: ProjectInfo | null = null
 
@@ -18,7 +19,10 @@ const cliBinDir = is.dev
 
 const terminals = new TerminalManager(() => ({
   AIRUN9_SOCKET: SOCKET_PATH,
-  PATH: `${cliBinDir}:${process.env.PATH ?? ''}`
+  // plain prepend for shells without a bootstrap; zsh gets the reliable
+  // ZDOTDIR route since user rc files often rebuild PATH and wipe this
+  PATH: `${cliBinDir}:${process.env.PATH ?? ''}`,
+  ...zshBootstrapEnv(cliBinDir)
 }))
 const workers = new WorkerManager(terminals)
 
