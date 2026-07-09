@@ -24,7 +24,7 @@ const terminals = new TerminalManager(() => ({
   PATH: `${cliBinDir}:${process.env.PATH ?? ''}`,
   ...zshBootstrapEnv(cliBinDir)
 }))
-const workers = new WorkerManager(terminals)
+const workers = new WorkerManager(terminals, cliBinDir)
 
 const api = buildApi({
   terminals,
@@ -49,6 +49,8 @@ terminals.on('exit', (event) => broadcast('terminal:exit', event))
 terminals.on('closed', (event) => broadcast('terminal:closed', event))
 workers.on('created', (worker) => broadcast('worker:created', worker))
 workers.on('updated', (worker) => broadcast('worker:updated', worker))
+workers.on('request', (request) => broadcast('worker:request', request))
+workers.on('request-resolved', (resolution) => broadcast('worker:request-resolved', resolution))
 
 ipcMain.handle('rpc', async (_event, method: string, params: unknown) => {
   try {

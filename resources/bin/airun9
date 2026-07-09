@@ -7,13 +7,22 @@
  * Usage:
  *   airun9 ping
  *   airun9 project get
- *   airun9 worker create --prompt "fix the login bug" [--name fix-login] [--count 3]
+ *
+ *   # read-only research worker, spawns immediately
+ *   airun9 worker scout --prompt "..." [--name x] [--count N]
+ *
+ *   # mutating worker: the USER approves mode + location in the app.
+ *   # This call waits for their decision (may take a while; poll
+ *   # `worker list` if your call times out — it may still be approved).
+ *   airun9 worker request --prompt "..." --recommend bypass|edits|manual \
+ *     [--location shared|worktree] [--reason "why this mode"] [--name x] [--count N]
+ *
  *   airun9 worker list
- *   airun9 worker read <id> [--tail 20000] [--raw]
+ *   airun9 worker read <id> [--tail 20000] [--raw]     # live terminal tail
+ *   airun9 worker result <id>                          # final answer (clean text)
+ *   airun9 worker prompt <id> --prompt "..."           # follow-up (worker must be done)
  *   airun9 worker stop <id>
- *   airun9 terminal list
- *   airun9 terminal create [--cwd path] [--title name]
- *   airun9 terminal read <id> [--tail 20000] [--raw]
+ *   airun9 terminal list|create|read
  */
 'use strict'
 
@@ -79,6 +88,15 @@ function call(method, params) {
   })
 }
 
+function readStdin() {
+  return new Promise((resolve) => {
+    let data = ''
+    process.stdin.on('data', (chunk) => (data += chunk))
+    process.stdin.on('end', () => resolve(data))
+    process.stdin.on('error', () => resolve(data))
+  })
+}
+
 // Strip ANSI escape sequences so agents get readable text by default
 function stripAnsi(text) {
   return text
@@ -99,22 +117,60 @@ function printRead(result, flags) {
   if (result.data && !result.data.endsWith('\n')) process.stdout.write('\n')
 }
 
+// Claude Code hook endpoint: receives the hook payload on stdin, reports the
+// event for the worker identified by AIRUN9_WORKER_ID. Always exits 0 —
+// a failing hook must never block the agent.
+async function runHook(event) {
+  try {
+    const workerId = process.env.AIRUN9_WORKER_ID
+    if (!workerId) return
+    const payload = JSON.parse((await readStdin()) || '{}')
+    await call('worker.hookEvent', {
+      workerId,
+      event,
+      transcriptPath: payload.transcript_path || undefined
+    })
+  } catch {
+    // swallow; observability must not break the worker
+  }
+}
+
 async function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2))
   const [domain, action, id] = positional
   const tail = flags.tail ? Number(flags.tail) : undefined
+
+  if (domain === 'hook') {
+    if (action !== 'stop' && action !== 'prompt-submit') fail(`unknown hook event "${action}"`)
+    return runHook(action)
+  }
 
   switch (`${domain} ${action}`) {
     case 'ping undefined':
       return printResult(await call('app.ping'))
     case 'project get':
       return printResult(await call('project.get'))
-    case 'worker create': {
-      if (!flags.prompt || flags.prompt === true) fail('worker create requires --prompt "..."')
+    case 'worker scout': {
+      if (!flags.prompt || flags.prompt === true) fail('worker scout requires --prompt "..."')
       const params = { prompt: flags.prompt }
       if (typeof flags.name === 'string') params.name = flags.name
       if (flags.count) params.count = Number(flags.count)
-      return printResult(await call('worker.create', params))
+      return printResult(await call('worker.scout', params))
+    }
+    case 'worker request': {
+      if (!flags.prompt || flags.prompt === true) fail('worker request requires --prompt "..."')
+      if (typeof flags.recommend !== 'string')
+        fail('worker request requires --recommend bypass|edits|manual')
+      const params = {
+        prompt: flags.prompt,
+        recommendedMode: flags.recommend,
+        recommendedLocation: typeof flags.location === 'string' ? flags.location : 'shared'
+      }
+      if (typeof flags.name === 'string') params.name = flags.name
+      if (typeof flags.reason === 'string') params.reason = flags.reason
+      if (flags.count) params.count = Number(flags.count)
+      process.stderr.write('airun9: waiting for the user to approve in AIRUN9…\n')
+      return printResult(await call('worker.request', params))
     }
     case 'worker list':
       return printResult(await call('worker.list'))
@@ -124,6 +180,21 @@ async function main() {
     case 'worker read':
       if (!id) fail('usage: airun9 worker read <id>')
       return printRead(await call('worker.read', { id, tail }), flags)
+    case 'worker result': {
+      if (!id) fail('usage: airun9 worker result <id>')
+      const result = await call('worker.result', { id })
+      if (flags.json) return printResult(result)
+      if (result.text === null) {
+        return fail(`no result yet (worker status: ${result.status})`)
+      }
+      process.stdout.write(result.text + '\n')
+      return
+    }
+    case 'worker prompt': {
+      if (!id) fail('usage: airun9 worker prompt <id> --prompt "..."')
+      if (!flags.prompt || flags.prompt === true) fail('worker prompt requires --prompt "..."')
+      return printResult(await call('worker.prompt', { id, prompt: flags.prompt }))
+    }
     case 'worker stop':
       if (!id) fail('usage: airun9 worker stop <id>')
       return printResult(await call('worker.stop', { id }))
@@ -141,7 +212,7 @@ async function main() {
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker create|list|get|read|stop | terminal list|create|read'
+          'commands: ping | project get | worker scout|request|list|get|read|result|prompt|stop | terminal list|create|read'
       )
   }
 }

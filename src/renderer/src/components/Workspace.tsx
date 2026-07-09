@@ -1,21 +1,32 @@
 import { useEffect } from 'react'
 import { IconPlus, IconRobot, IconX } from '@tabler/icons-react'
-import type { TerminalInfo } from '../../../shared/types'
+import type { TerminalInfo, WorkerInfo } from '../../../shared/types'
 import { api, events } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
 import TerminalView from './TerminalView'
+import WorkerApprovalModal from './WorkerApprovalModal'
 
 // Survives StrictMode double-mount: only ever auto-create the first terminal once
 let bootstrapped = false
 
-function TabLabel({ terminal }: { terminal: TerminalInfo }): React.JSX.Element {
+const WORKER_STATUS_COLOR: Record<string, string> = {
+  running: 'text-emerald-400',
+  done: 'text-amber-400',
+  exited: 'text-neutral-600'
+}
+
+function TabLabel({
+  terminal,
+  worker
+}: {
+  terminal: TerminalInfo
+  worker?: WorkerInfo
+}): React.JSX.Element {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       {terminal.workerId && (
         <IconRobot
-          className={`size-3.5 shrink-0 ${
-            terminal.status === 'running' ? 'text-emerald-400' : 'text-neutral-600'
-          }`}
+          className={`size-3.5 shrink-0 ${WORKER_STATUS_COLOR[worker?.status ?? 'exited']}`}
           stroke={1.75}
         />
       )}
@@ -33,15 +44,25 @@ function TabLabel({ terminal }: { terminal: TerminalInfo }): React.JSX.Element {
 function Workspace(): React.JSX.Element {
   const project = useWorkspaceStore((s) => s.project)
   const terminals = useWorkspaceStore((s) => s.terminals)
+  const workers = useWorkspaceStore((s) => s.workers)
   const activeTerminalId = useWorkspaceStore((s) => s.activeTerminalId)
-  const { setTerminals, upsertTerminal, removeTerminal, markTerminalExited, setActiveTerminal } =
-    useWorkspaceStore.getState()
+  const {
+    setTerminals,
+    upsertTerminal,
+    removeTerminal,
+    markTerminalExited,
+    setActiveTerminal,
+    setWorkers,
+    upsertWorker
+  } = useWorkspaceStore.getState()
 
   useEffect(() => {
     // Subscribe before fetching so nothing created in between is missed
     const offCreated = events.onTerminalCreated((info) => upsertTerminal(info))
     const offClosed = events.onTerminalClosed(({ id }) => removeTerminal(id))
     const offExit = events.onTerminalExit(({ id, exitCode }) => markTerminalExited(id, exitCode))
+    const offWorkerCreated = events.onWorkerCreated((worker) => upsertWorker(worker))
+    const offWorkerUpdated = events.onWorkerUpdated((worker) => upsertWorker(worker))
 
     void api.listTerminals().then((list) => {
       setTerminals(list)
@@ -50,13 +71,24 @@ function Workspace(): React.JSX.Element {
         void api.createTerminal().then((info) => setActiveTerminal(info.id))
       }
     })
+    void api.listWorkers().then(setWorkers)
 
     return () => {
       offCreated()
       offClosed()
       offExit()
+      offWorkerCreated()
+      offWorkerUpdated()
     }
-  }, [markTerminalExited, removeTerminal, setActiveTerminal, setTerminals, upsertTerminal])
+  }, [
+    markTerminalExited,
+    removeTerminal,
+    setActiveTerminal,
+    setTerminals,
+    setWorkers,
+    upsertTerminal,
+    upsertWorker
+  ])
 
   const createTerminal = (): void => {
     void api.createTerminal().then((info) => setActiveTerminal(info.id))
@@ -90,7 +122,7 @@ function Workspace(): React.JSX.Element {
             }`}
             onClick={() => setActiveTerminal(terminal.id)}
           >
-            <TabLabel terminal={terminal} />
+            <TabLabel terminal={terminal} worker={workers[terminal.id]} />
             <button
               type="button"
               className="ml-0.5 rounded p-0.5 text-neutral-600 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/[0.08] hover:text-neutral-300"
@@ -127,6 +159,7 @@ function Workspace(): React.JSX.Element {
             active={terminal.id === activeTerminalId}
           />
         ))}
+        <WorkerApprovalModal />
       </div>
     </div>
   )

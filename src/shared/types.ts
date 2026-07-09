@@ -21,9 +21,46 @@ export interface WorkerInfo {
   name: string
   prompt: string
   terminalId: string
-  status: TerminalStatus
+  kind: WorkerKind
+  mode: WorkerMode
+  location: WorkerLocation
+  /** Directory the worker runs in (project dir or its worktree) */
+  cwd: string
+  /**
+   * running — agent is working on a turn
+   * done — agent finished its turn and is idle (keep-alive; can be prompted)
+   * exited — process is gone (stopped or crashed)
+   */
+  status: WorkerStatus
   exitCode: number | null
+  /** Claude Code transcript (JSONL), reported by the Stop hook */
+  transcriptPath: string | null
   createdAt: number
+}
+
+export type WorkerKind = 'scout' | 'full'
+/** plan = read-only research; manual = user answers permission prompts in the tab */
+export type WorkerMode = 'plan' | 'bypass' | 'edits' | 'manual'
+export type WorkerLocation = 'shared' | 'worktree'
+export type WorkerStatus = 'running' | 'done' | 'exited'
+
+/** A pending "spawn full worker" approval shown to the user in the app */
+export interface WorkerRequest {
+  id: string
+  prompt: string
+  name: string | null
+  count: number
+  reason: string | null
+  recommendedMode: Exclude<WorkerMode, 'plan'>
+  recommendedLocation: WorkerLocation
+  createdAt: number
+}
+
+export interface WorkerRequestDecision {
+  requestId: string
+  approved: boolean
+  mode: Exclude<WorkerMode, 'plan'>
+  location: WorkerLocation
 }
 
 export interface ProjectInfo {
@@ -61,7 +98,9 @@ export const EVENT_CHANNELS = [
   'terminal:exit',
   'terminal:closed',
   'worker:created',
-  'worker:updated'
+  'worker:updated',
+  'worker:request',
+  'worker:request-resolved'
 ] as const
 
 export type EventChannel = (typeof EVENT_CHANNELS)[number]

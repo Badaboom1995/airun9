@@ -4,7 +4,9 @@ import type {
   TerminalExitEvent,
   TerminalInfo,
   TerminalSnapshot,
-  WorkerInfo
+  WorkerInfo,
+  WorkerRequest,
+  WorkerRequestDecision
 } from '../../../shared/types'
 
 async function rpc<T>(method: string, params?: unknown): Promise<T> {
@@ -26,7 +28,10 @@ export const api = {
     rpc<void>('terminal.resize', { id, cols, rows }),
   closeTerminal: (id: string) => rpc<void>('terminal.close', { id }),
 
-  listWorkers: () => rpc<WorkerInfo[]>('worker.list')
+  listWorkers: () => rpc<WorkerInfo[]>('worker.list'),
+  pendingWorkerRequests: () => rpc<WorkerRequest[]>('worker.pendingRequests'),
+  resolveWorkerRequest: (decision: WorkerRequestDecision) =>
+    rpc<void>('worker.resolveRequest', decision)
 }
 
 /** Typed wrappers over the preload event bridge */
@@ -38,5 +43,13 @@ export const events = {
   onTerminalExit: (cb: (event: TerminalExitEvent) => void) =>
     window.api.on('terminal:exit', cb as (payload: unknown) => void),
   onTerminalClosed: (cb: (event: { id: string }) => void) =>
-    window.api.on('terminal:closed', cb as (payload: unknown) => void)
+    window.api.on('terminal:closed', cb as (payload: unknown) => void),
+  onWorkerCreated: (cb: (worker: WorkerInfo) => void) =>
+    window.api.on('worker:created', cb as (payload: unknown) => void),
+  onWorkerUpdated: (cb: (worker: WorkerInfo) => void) =>
+    window.api.on('worker:updated', cb as (payload: unknown) => void),
+  onWorkerRequest: (cb: (request: WorkerRequest) => void) =>
+    window.api.on('worker:request', cb as (payload: unknown) => void),
+  onWorkerRequestResolved: (cb: (event: { requestId: string; approved: boolean }) => void) =>
+    window.api.on('worker:request-resolved', cb as (payload: unknown) => void)
 }

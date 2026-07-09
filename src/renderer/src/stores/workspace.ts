@@ -1,9 +1,11 @@
 import { create } from 'zustand'
-import type { ProjectInfo, TerminalInfo } from '../../../shared/types'
+import type { ProjectInfo, TerminalInfo, WorkerInfo } from '../../../shared/types'
 
 interface WorkspaceState {
   project: ProjectInfo | null
   terminals: TerminalInfo[]
+  /** keyed by terminalId for tab decoration */
+  workers: Record<string, WorkerInfo>
   activeTerminalId: string | null
 
   setProject: (project: ProjectInfo | null) => void
@@ -12,11 +14,14 @@ interface WorkspaceState {
   removeTerminal: (id: string) => void
   markTerminalExited: (id: string, exitCode: number) => void
   setActiveTerminal: (id: string | null) => void
+  setWorkers: (workers: WorkerInfo[]) => void
+  upsertWorker: (worker: WorkerInfo) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   project: null,
   terminals: [],
+  workers: {},
   activeTerminalId: null,
 
   setProject: (project) => set({ project }),
@@ -60,5 +65,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       )
     })),
 
-  setActiveTerminal: (id) => set({ activeTerminalId: id })
+  setActiveTerminal: (id) => set({ activeTerminalId: id }),
+
+  setWorkers: (workers) =>
+    set({ workers: Object.fromEntries(workers.map((w) => [w.terminalId, w])) }),
+
+  upsertWorker: (worker) =>
+    set((state) => ({ workers: { ...state.workers, [worker.terminalId]: worker } }))
 }))

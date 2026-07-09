@@ -84,23 +84,60 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       return { ok: true }
     },
 
-    'worker.create': (params) => {
-      const { prompt, name, count } = z
+    // read-only scouts spawn without approval
+    'worker.scout': (params) => {
+      const options = z
         .object({
           prompt: z.string().min(1),
           name: z.string().optional(),
           count: z.number().int().min(1).max(4).default(1)
         })
         .parse(params)
-      const project = requireProject()
-      return Array.from({ length: count }, (_, i) =>
-        ctx.workers.create({
-          prompt,
-          name: name && count > 1 ? `${name}-${i + 1}` : name,
-          cwd: project.path
-        })
-      )
+      return ctx.workers.createScouts(options, requireProject())
     },
+    // mutating workers only spawn through the user's in-app approval
+    'worker.request': (params) => {
+      const options = z
+        .object({
+          prompt: z.string().min(1),
+          name: z.string().optional(),
+          count: z.number().int().min(1).max(4).default(1),
+          reason: z.string().optional(),
+          recommendedMode: z.enum(['bypass', 'edits', 'manual']),
+          recommendedLocation: z.enum(['shared', 'worktree']).default('shared')
+        })
+        .parse(params)
+      requireProject()
+      return ctx.workers.requestFull(options)
+    },
+    'worker.pendingRequests': () => ctx.workers.pendingRequests(),
+    'worker.resolveRequest': (params) => {
+      const decision = z
+        .object({
+          requestId: z.string(),
+          approved: z.boolean(),
+          mode: z.enum(['bypass', 'edits', 'manual']),
+          location: z.enum(['shared', 'worktree'])
+        })
+        .parse(params)
+      return ctx.workers.resolveRequest(decision, requireProject())
+    },
+    'worker.hookEvent': (params) => {
+      const { workerId, event, transcriptPath } = z
+        .object({
+          workerId: z.string(),
+          event: z.enum(['stop', 'prompt-submit']),
+          transcriptPath: z.string().optional()
+        })
+        .parse(params)
+      ctx.workers.hookEvent(workerId, event, transcriptPath)
+      return { ok: true }
+    },
+    'worker.prompt': (params) => {
+      const { id, prompt } = z.object({ id: z.string(), prompt: z.string().min(1) }).parse(params)
+      return ctx.workers.prompt(id, prompt)
+    },
+    'worker.result': (params) => ctx.workers.result(idParam.parse(params).id),
     'worker.list': () => ctx.workers.list(),
     'worker.get': (params) => ctx.workers.get(idParam.parse(params).id),
     'worker.read': (params) => {
