@@ -38,7 +38,7 @@ interface TerminalViewProps {
 function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
+  const fitRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -63,7 +63,15 @@ function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
       // WebGL unavailable — the DOM renderer is a fine fallback
     }
     termRef.current = term
-    fitRef.current = fit
+
+    // Fit only when the container is actually laid out: fitting a hidden
+    // tab (display: none, 0×0) computes a degenerate size and resizes the
+    // PTY to a few columns, garbling everything the TUI draws before the
+    // tab is first opened.
+    const fitIfVisible = (): void => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
+    }
+    fitRef.current = fitIfVisible
 
     // Replay protocol: buffer live events until the snapshot lands, then
     // apply only what the snapshot doesn't already contain (seq ordering).
@@ -90,7 +98,7 @@ function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
       }
       queued.length = 0
       snapshotSeq = snapshot.seq
-      fit.fit()
+      fitIfVisible()
     })
 
     const onDataDisposable = term.onData((data) => void api.writeTerminal(id, data))
@@ -98,9 +106,7 @@ function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
       void api.resizeTerminal(id, cols, rows)
     })
 
-    const resizeObserver = new ResizeObserver(() => {
-      if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
-    })
+    const resizeObserver = new ResizeObserver(fitIfVisible)
     resizeObserver.observe(container)
 
     return () => {
@@ -118,7 +124,7 @@ function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
 
   useEffect(() => {
     if (active) {
-      fitRef.current?.fit()
+      fitRef.current?.()
       termRef.current?.focus()
     }
   }, [active])
