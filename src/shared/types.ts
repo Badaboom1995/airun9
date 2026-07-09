@@ -124,6 +124,9 @@ export type LayoutNode = TabsNode | SplitNode
 /** Where block.open places a new pane */
 export type PanePosition = 'tab' | 'right' | 'down'
 
+/** Built-in block types that block.open can instantiate directly (no bundle) */
+export const BUILTIN_OPENABLE_BLOCKS = ['hello'] as const
+
 /** Manifest of a user/agent-authored block (~/.airun9/blocks/<name>/block.json) */
 export interface BlockManifest {
   name: string

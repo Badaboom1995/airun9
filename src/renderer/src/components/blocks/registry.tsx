@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ComponentType } from 'react'
 import TerminalBlock from './TerminalBlock'
 import CustomBlockHost from './CustomBlockHost'
+import HelloBlock from './HelloBlock'
 
 /**
  * Block registry (build-plan step 1): a block type is a component plus a
@@ -22,6 +23,10 @@ export interface BlockDefinition {
 }
 
 export const blockRegistry: Record<string, BlockDefinition> = {
+  hello: {
+    configSchema: z.object({}).passthrough(),
+    component: HelloBlock as ComponentType<BlockPaneProps>
+  },
   terminal: {
     configSchema: z.object({ terminalId: z.string() }),
     component: TerminalBlock as ComponentType<BlockPaneProps>

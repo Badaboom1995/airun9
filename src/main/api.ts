@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { z } from 'zod'
-import type { LayoutNode, ProjectInfo } from '../shared/types'
+import { BUILTIN_OPENABLE_BLOCKS, type LayoutNode, type ProjectInfo } from '../shared/types'
 import type { TerminalManager } from './terminals'
 import type { WorkerManager } from './workers'
 import type { LayoutManager } from './layout'
@@ -192,6 +192,9 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       const { name, position } = z
         .object({ name: z.string(), position: z.enum(['tab', 'right', 'down']).default('tab') })
         .parse(params)
+      if ((BUILTIN_OPENABLE_BLOCKS as readonly string[]).includes(name)) {
+        return ctx.layout.addItem({ block: name, config: {} }, position)
+      }
       ctx.blocks.bundle(name) // throws early if unknown or broken
       return ctx.layout.addItem({ block: 'custom', config: { name } }, position)
     },
