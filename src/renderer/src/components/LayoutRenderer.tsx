@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { IconPlus, IconPuzzle, IconRobot, IconX } from '@tabler/icons-react'
+import { IconPlus, IconPuzzle, IconX } from '@tabler/icons-react'
+import IconAstronaut from './icons/IconAstronaut'
 import type { LayoutNode, LayoutTabItem, SplitNode, TabsNode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -28,7 +29,7 @@ function TabLabel({ item }: { item: LayoutTabItem }): React.JSX.Element {
     return (
       <span className="flex min-w-0 items-center gap-1.5">
         {terminal?.workerId && (
-          <IconRobot
+          <IconAstronaut
             className={`size-3.5 shrink-0 ${WORKER_STATUS_COLOR[worker?.status ?? 'exited']}`}
             stroke={1.75}
           />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IconRobot } from '@tabler/icons-react'
+import IconAstronaut from './icons/IconAstronaut'
 import type { WorkerLocation, WorkerMode, WorkerRequest } from '../../../shared/types'
 import { api, events } from '../lib/api'
 
@@ -109,7 +109,7 @@ function WorkerApprovalModal(): React.JSX.Element | null {
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
       <div className="w-[480px] rounded-xl border border-white/10 bg-[#131614] p-5 shadow-2xl">
         <div className="flex items-center gap-2">
-          <IconRobot className="size-4 text-emerald-400" stroke={1.75} />
+          <IconAstronaut className="size-4 text-emerald-400" stroke={1.75} />
           <h2 className="text-[13px] font-medium text-neutral-100">
             An agent wants to spawn {request.count > 1 ? `${request.count} workers` : 'a worker'}
           </h2>

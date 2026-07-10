@@ -1,4 +1,5 @@
-import { IconPlayerStop, IconRobot, IconX } from '@tabler/icons-react'
+import { IconPlayerStop, IconX } from '@tabler/icons-react'
+import IconAstronaut from '../icons/IconAstronaut'
 import type { WorkerInfo } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useWorkspaceStore } from '../../stores/workspace'
@@ -55,7 +56,7 @@ function WorkersBlock(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
-        <IconRobot className="size-4 text-neutral-400" stroke={1.75} />
+        <IconAstronaut className="size-4 text-neutral-400" stroke={1.75} />
         <h3 className="text-[11px] tracking-[0.2em] text-neutral-400">WORKERS</h3>
         <span className="text-[11px] text-neutral-600">
           {workers.filter((w) => w.status === 'running').length} working
