@@ -8,6 +8,14 @@ import type { BlockGrantRequest, BlockInfo, BlockManifest } from '../shared/type
 
 export const BLOCKS_DIR = join(homedir(), '.airun9', 'blocks')
 
+/**
+ * CSP for block documents served over airun9-block://. Blocks get their own
+ * policy instead of inheriting the app page's (which forbids inline scripts
+ * and killed srcdoc-hosted blocks); the iframe sandbox keeps them null-origin.
+ */
+export const BLOCK_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
+
 /** Methods any block may call once declared — reading is free (ADR-0004) */
 const READ_ONLY_METHODS = new Set([
   'app.ping',
@@ -76,6 +84,18 @@ export class BlocksManager extends EventEmitter {
     if (!block) throw new Error(`Unknown block: ${name}`)
     if (block.code === null) throw new Error(block.info.error ?? `Block ${name} failed to build`)
     return { code: block.code, manifest: block.info.manifest }
+  }
+
+  /** Full HTML document for a block iframe, served via airun9-block:// */
+  document(name: string): string {
+    const { code } = this.bundle(name)
+    const safe = code.replace(/<\/script/gi, '<\\/script')
+    return (
+      '<!doctype html><html><head>' +
+      '<style>body{margin:0;background:#0b0e0c;color:#d6d8d6;font:13px ui-sans-serif,system-ui}</style>' +
+      '</head><body><div id="root"></div>' +
+      `<script>${safe}</script></body></html>`
+    )
   }
 
   /**

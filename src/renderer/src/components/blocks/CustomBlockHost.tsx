@@ -5,9 +5,11 @@ import type { BlockPaneProps } from './registry'
 
 /**
  * Hosts a user/agent-authored block in a null-origin sandboxed iframe
- * (ADR-0003 v2, Figma-plugin model). The block's only channel to the app is
- * a MessagePort; every rpc is checked against its granted capabilities
- * before being forwarded to the dispatcher.
+ * (ADR-0003 v2, Figma-plugin model). The document loads from the
+ * airun9-block:// protocol so it carries its own CSP rather than inheriting
+ * the app page's (which forbids the inline bundle script). The block's only
+ * channel to the app is a MessagePort; every rpc is checked against its
+ * granted capabilities before being forwarded to the dispatcher.
  */
 
 interface RpcMessage {
@@ -21,36 +23,26 @@ interface SubscribeMessage {
   channel: string
 }
 
-function buildSrcdoc(code: string): string {
-  const safe = code.replace(/<\/script/gi, '<\\/script')
-  return (
-    '<!doctype html><html><head>' +
-    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
-    "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;\">" +
-    '<style>body{margin:0;background:#0b0e0c;color:#d6d8d6;font:13px ui-sans-serif,system-ui}</style>' +
-    '</head><body><div id="root"></div>' +
-    `<script>${safe}</script></body></html>`
-  )
-}
-
 function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JSX.Element {
   const { name } = config
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [srcdoc, setSrcdoc] = useState<string | null>(null)
+  const [src, setSrc] = useState<string | null>(null)
   const [granted, setGranted] = useState<Set<string> | null>(null)
   // keyed by load attempt so a reload implicitly clears the previous error
   const [loadError, setLoadError] = useState<{ version: number; message: string } | null>(null)
   const [version, setVersion] = useState(0)
   const error = loadError && loadError.version === version ? loadError.message : null
 
-  // load bundle + resolve grants (grant call may wait on the user's dialog)
+  // check the bundle builds + resolve grants (grant call may wait on the
+  // user's dialog); the document itself is fetched by the iframe from the
+  // airun9-block:// protocol, ?v= forces a reload when the block updates
   useEffect(() => {
     let disposed = false
     void Promise.all([api.blockBundle(name), api.blockGrant(name)])
-      .then(([bundle, grant]) => {
+      .then(([, grant]) => {
         if (disposed) return
         setGranted(new Set(grant.granted))
-        setSrcdoc(buildSrcdoc(bundle.code))
+        setSrc(`airun9-block://bundle/${encodeURIComponent(name)}?v=${version}`)
       })
       .catch((e: Error) => !disposed && setLoadError({ version, message: e.message }))
     const offUpdated = events.onBlockUpdated((event) => {
@@ -66,7 +58,7 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
   // with a port, so no iframe load-order race is possible
   useEffect(() => {
     const iframe = iframeRef.current
-    if (!iframe || !srcdoc || !granted) return
+    if (!iframe || !src || !granted) return
 
     const subscriptions: Array<() => void> = []
     let port: MessagePort | null = null
@@ -114,7 +106,7 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
       subscriptions.forEach((off) => off())
       port?.close()
     }
-  }, [srcdoc, granted])
+  }, [src, granted])
 
   if (error) {
     return (
@@ -123,7 +115,7 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
       </div>
     )
   }
-  if (!srcdoc) {
+  if (!src) {
     return (
       <div className="flex h-full items-center justify-center text-[12px] text-neutral-600">
         Loading block “{name}”…
@@ -135,7 +127,7 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
       ref={iframeRef}
       title={`block:${name}`}
       sandbox="allow-scripts"
-      srcDoc={srcdoc}
+      src={src}
       className="h-full w-full border-0"
     />
   )

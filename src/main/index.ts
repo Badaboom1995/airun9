@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeTheme, protocol } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -6,12 +6,20 @@ import type { ProjectInfo } from '../shared/types'
 import { TerminalManager } from './terminals'
 import { WorkerManager } from './workers'
 import { LayoutManager } from './layout'
-import { BlocksManager } from './blocks'
+import { BlocksManager, BLOCK_CSP } from './blocks'
 import { buildApi, dispatch } from './api'
 import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
 import { zshBootstrapEnv } from './shell-env'
 
 let currentProject: ProjectInfo | null = null
+
+// Block documents load from their own scheme so they carry their own CSP
+// instead of inheriting the app page's (srcdoc iframes inherit the embedder's
+// policy, which forbids inline scripts and left blocks blank). Must be
+// registered before app ready.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'airun9-block', privileges: { standard: true, secure: true } }
+])
 
 // Managed terminals get the airun9 CLI on PATH and the socket path in env,
 // so any agent running inside can call the public API (ADR-0008).
@@ -134,6 +142,21 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
 
   nativeTheme.themeSource = 'dark'
+
+  // airun9-block://bundle/<name> serves the compiled block as a standalone
+  // document; the renderer embeds it in a sandboxed (null-origin) iframe
+  protocol.handle('airun9-block', (request) => {
+    const { pathname } = new URL(request.url)
+    const name = decodeURIComponent(pathname.replace(/^\//, ''))
+    try {
+      return new Response(blocks.document(name), {
+        headers: { 'Content-Type': 'text/html', 'Content-Security-Policy': BLOCK_CSP }
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return new Response(message, { status: 404, headers: { 'Content-Type': 'text/plain' } })
+    }
+  })
 
   // In dev the dock shows the default Electron icon; packaged builds use build/icon.icns
   if (is.dev && process.platform === 'darwin') {

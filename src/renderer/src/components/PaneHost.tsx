@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react'
 import type { LayoutTabItem } from '../../../shared/types'
 import { blockRegistry } from './blocks/registry'
+import CustomBlockHost from './blocks/CustomBlockHost'
 
 function ErrorPane({ message }: { message: string }): React.JSX.Element {
   return (
@@ -25,7 +26,15 @@ class PaneErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
 /** Instantiates a layout item through the registry: validate config, contain errors */
 function PaneHost({ item, active }: { item: LayoutTabItem; active: boolean }): React.JSX.Element {
   const definition = blockRegistry[item.block]
-  if (!definition) return <ErrorPane message={`Unknown block type: ${item.block}`} />
+  // built-in and custom blocks are addressed alike: any type not in the
+  // registry is treated as a custom block name (the host reports unknown ones)
+  if (!definition) {
+    return (
+      <PaneErrorBoundary>
+        <CustomBlockHost config={{ name: item.block }} itemId={item.id} active={active} />
+      </PaneErrorBoundary>
+    )
+  }
   const parsed = definition.configSchema.safeParse(item.config)
   if (!parsed.success) {
     return <ErrorPane message={`Invalid config for ${item.block}: ${parsed.error.message}`} />

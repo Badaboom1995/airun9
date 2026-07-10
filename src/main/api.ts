@@ -196,7 +196,8 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
         return ctx.layout.addItem({ block: name, config: {} }, position)
       }
       ctx.blocks.bundle(name) // throws early if unknown or broken
-      return ctx.layout.addItem({ block: 'custom', config: { name } }, position)
+      // custom blocks live in the layout under their own name, same as builtins
+      return ctx.layout.addItem({ block: name, config: {} }, position)
     },
     'block.grant': (params) => {
       const { name } = z.object({ name: z.string() }).parse(params)
