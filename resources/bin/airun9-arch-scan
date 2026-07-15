@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+# airun9-arch-scan — mechanical architecture scanner (Python projects).
+#
+# Emits architecture JSON in the .airun9/architecture.json schema: modules
+# (aggregated packages/files) with LOC, import edges between them, groups
+# from top-level packages. Stdlib only; parses with `ast`, never imports
+# project code.
+#
+# This is the generated layer of the two-layer design: agents run it for a
+# fresh mechanical baseline (structure, loc, import edges), then curate on
+# top — summaries, semantic edges (IPC, queues, HTTP), better grouping —
+# and write the merged result to .airun9/architecture.json themselves.
+#
+# Usage:
+#   airun9-arch-scan [root]                  # print JSON to stdout
+#   airun9-arch-scan --out .airun9/architecture.generated.json
+#   airun9-arch-scan --include-tests --depth 2 --max-modules 30
+import argparse
+import ast
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+
+SKIP_DIRS = {
+    '.git', '.hg', '.svn', '__pycache__', 'node_modules', '.tox', '.nox',
+    '.mypy_cache', '.pytest_cache', '.ruff_cache', 'build', 'dist', '.eggs',
+    '.venv', 'venv', '.direnv', 'site-packages', '.ipynb_checkpoints'
+}
+TEST_DIR_NAMES = {'test', 'tests', 'testing'}
+SRC_ROOTS = {'src', 'lib'}
+SCRIPTS_ID = 'scripts'
+
+
+def eprint(*a):
+    print(*a, file=sys.stderr)
+
+
+# ---------------------------------------------------------------- discovery
+
+def git_ls_files(root):
+    """File list via git (respects .gitignore); None when not a repo."""
+    try:
+        out = subprocess.run(
+            ['git', '-C', str(root), 'ls-files', '--cached', '--others',
+             '--exclude-standard', '-z', '--', '*.py'],
+            capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    names = [n for n in out.stdout.decode('utf-8', 'replace').split('\0') if n]
+    # empty can mean "everything gitignored" (e.g. scanning inside a parent
+    # repo that ignores this dir) — let the walker decide in that case
+    return [PurePosixPath(n) for n in names] or None
+
+
+def walk_files(root):
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in SKIP_DIRS and not d.startswith('.')
+            and not (Path(dirpath) / d / 'pyvenv.cfg').exists()
+        ]
+        for f in filenames:
+            if f.endswith('.py'):
+                rel = Path(dirpath, f).relative_to(root)
+                found.append(PurePosixPath(rel.as_posix()))
+    return found
+
+
+def is_test_path(parts):
+    if any(p in TEST_DIR_NAMES for p in parts[:-1]):
+        return True
+    name = parts[-1]
+    return name.startswith('test_') or name.endswith('_test.py') or name == 'conftest.py'
+
+
+def discover(root, include_tests):
+    files = git_ls_files(root)
+    if files is None:
+        files = walk_files(root)
+    kept = []
+    for rel in files:
+        parts = rel.parts
+        if any(p in SKIP_DIRS or p.startswith('.') for p in parts[:-1]):
+            continue
+        if not include_tests and is_test_path(parts):
+            continue
+        if (Path(root) / str(rel)).is_file():
+            kept.append(rel)
+    return sorted(set(kept))
+
+
+# ------------------------------------------------------------ module naming
+
+class PyFile:
+    __slots__ = ('rel', 'parts', 'is_pkg', 'loc')
+
+    def __init__(self, rel, parts, is_pkg, loc):
+        self.rel = rel          # repo-relative path (posix)
+        self.parts = parts      # dotted-name components, src/ stripped
+        self.is_pkg = is_pkg    # True for __init__.py
+        self.loc = loc
+
+    @property
+    def package(self):
+        """Containing package as name components (self for __init__.py)."""
+        return self.parts if self.is_pkg else self.parts[:-1]
+
+
+def should_strip_src(root, files):
+    """Strip a leading src/ (or lib/) only when it's a plain source root,
+    not itself a package."""
+    firsts = {f.parts[0] for f in files if len(f.parts) > 1}
+    return {
+        d for d in firsts
+        if d in SRC_ROOTS and not (Path(root) / d / '__init__.py').exists()
+    }
+
+
+def name_files(root, rels):
+    files = []
+    for rel in rels:
+        try:
+            text = (Path(root) / str(rel)).read_text('utf-8', errors='replace')
+        except OSError:
+            continue
+        loc = text.count('\n') + (1 if text and not text.endswith('\n') else 0)
+        files.append(PyFile(rel, list(rel.parts), False, loc))
+    stripped = should_strip_src(root, files)
+    # scanning a package dir directly: internal imports say "rootpkg.x.y",
+    # so names must carry the root package prefix to resolve
+    root_pkg = [Path(root).name] if (Path(root) / '__init__.py').exists() else []
+    for f in files:
+        parts = list(f.rel.parts)
+        if len(parts) > 1 and parts[0] in stripped:
+            parts = parts[1:]
+        parts = root_pkg + parts
+        if parts[-1] == '__init__.py':
+            parts = parts[:-1]
+            f.is_pkg = True
+        else:
+            parts[-1] = parts[-1][:-3]
+        f.parts = parts
+    return files
+
+
+# ------------------------------------------------------------- aggregation
+
+def module_id(parts, is_pkg, depth, toplevel_scripts):
+    """Aggregated module id ('/'-joined name prefix) for a dotted name."""
+    if len(parts) == 1 and parts[0] in toplevel_scripts:
+        return SCRIPTS_ID if depth > 1 else parts[0]
+    if is_pkg and len(parts) == 1 and depth > 1:
+        # top-level package __init__ — its natural id would collide with the group id
+        return parts[0] + '/init'
+    return '/'.join(parts[:depth])
+
+
+def count_at_depth(files, depth, toplevel_scripts):
+    return len({module_id(f.parts, f.is_pkg, depth, toplevel_scripts) for f in files})
+
+
+def choose_depth(files, toplevel_scripts, max_modules):
+    c = {d: count_at_depth(files, d, toplevel_scripts) for d in (1, 2, 3)}
+    if 8 <= c[1] <= max_modules:
+        return 1
+    if c[1] > max_modules:
+        return 1  # monorepo of many packages; folding trims the tail
+    if c[2] < 8 and c[3] > c[2]:
+        return 3  # single deep package; folding trims past max_modules
+    return 2
+
+
+# ---------------------------------------------------------------- imports
+
+def import_candidates(tree, package):
+    """Absolute dotted-name candidates (as component lists) for every import."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name.split('.')
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module.split('.') if node.module else []
+            if node.level:
+                up = node.level - 1
+                if up > len(package):
+                    continue  # relative import escaping the repo — ignore
+                base = package[:len(package) - up] if up else list(package)
+                mod = base + mod
+            if not mod:
+                continue
+            yield list(mod)
+            for alias in node.names:
+                if alias.name != '*':
+                    yield mod + [alias.name]
+
+
+def resolve(cand, known):
+    """Longest prefix of cand that names an internal module/package."""
+    for length in range(min(len(cand), 6), 0, -1):
+        if tuple(cand[:length]) in known:
+            return cand[:length]
+    return None
+
+
+# ------------------------------------------------------------------- main
+
+def scan(root, include_tests, forced_depth, max_modules, max_edges):
+    rels = discover(root, include_tests)
+    files = name_files(root, rels)
+    if not files:
+        eprint('airun9-arch-scan: no Python files found under', root)
+        sys.exit(1)
+
+    toplevel_scripts = {f.parts[0] for f in files if len(f.parts) == 1 and not f.is_pkg}
+    depth = forced_depth or choose_depth(files, toplevel_scripts, max_modules)
+
+    # internal name universe: every module name + every package prefix
+    known = set()
+    for f in files:
+        known.add(tuple(f.parts))
+        for i in range(1, len(f.parts)):
+            known.add(tuple(f.parts[:i]))
+
+    # modules
+    mod_files = {}  # id -> [PyFile]
+    for f in files:
+        mid = module_id(f.parts, f.is_pkg, depth, toplevel_scripts)
+        mod_files.setdefault(mid, []).append(f)
+
+    # edges from imports
+    plain_files = {tuple(f.parts) for f in files if not f.is_pkg}
+    edge_weights = {}  # (from, to) -> count
+    parse_errors = 0
+    for f in files:
+        src = (Path(root) / str(f.rel)).read_text('utf-8', errors='replace')
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            parse_errors += 1
+            continue
+        from_id = module_id(f.parts, f.is_pkg, depth, toplevel_scripts)
+        for cand in import_candidates(tree, f.package):
+            target = resolve(cand, known)
+            if target is None:
+                continue
+            to_id = module_id(target, tuple(target) not in plain_files,
+                              depth, toplevel_scripts)
+            if to_id in mod_files and to_id != from_id:
+                key = (from_id, to_id)
+                edge_weights[key] = edge_weights.get(key, 0) + 1
+
+    # fold smallest modules into <top>/other until under the cap
+    def fold(mod_files, edge_weights):
+        remap = {}
+        while len(mod_files) > max_modules:
+            foldable = [
+                (sum(f.loc for f in fl), mid) for mid, fl in mod_files.items()
+                if '/' in mid and not mid.endswith('/other') and mid != SCRIPTS_ID
+            ]
+            if not foldable:
+                break
+            _, victim = min(foldable)
+            target = '/'.join(victim.split('/')[:-1]) + '/other'
+            mod_files.setdefault(target, []).extend(mod_files.pop(victim))
+            remap[victim] = target
+            for old, new in list(remap.items()):
+                if new == victim:
+                    remap[old] = target
+        if remap:
+            rewired = {}
+            for (a, b), w in edge_weights.items():
+                a, b = remap.get(a, a), remap.get(b, b)
+                if a != b:
+                    rewired[(a, b)] = rewired.get((a, b), 0) + w
+            edge_weights = rewired
+        return mod_files, edge_weights
+
+    mod_files, edge_weights = fold(mod_files, edge_weights)
+
+    # empty-file modules (bare __init__.py at depth 3) carry no architecture
+    empty = {mid for mid, fl in mod_files.items() if sum(f.loc for f in fl) == 0}
+    if empty and len(empty) < len(mod_files):
+        for mid in empty:
+            del mod_files[mid]
+        edge_weights = {k: w for k, w in edge_weights.items()
+                        if k[0] not in empty and k[1] not in empty}
+
+    # groups: top-level packages (deep mode) / kind bands (flat mode)
+    def group_of(mid):
+        if mid == SCRIPTS_ID:
+            return SCRIPTS_ID
+        if depth > 1:
+            # band per name prefix one level above modules (top packages at
+            # depth 2, subpackages at depth 3)
+            c = mid.split('/')
+            return '/'.join(c[:depth - 1]) if len(c) >= depth else '/'.join(c[:-1]) or c[0]
+        return SCRIPTS_ID if mid in toplevel_scripts else 'packages'
+
+    group_ids = {group_of(mid) for mid in mod_files}
+    emit_groups = len(group_ids) > 1
+
+    # order groups so importers sit above what they import (edges flow down)
+    flow = {g: 0 for g in group_ids}
+    for (a, b), w in edge_weights.items():
+        ga, gb = group_of(a), group_of(b)
+        if ga != gb:
+            flow[ga] += w
+            flow[gb] -= w
+    ordered_groups = sorted(group_ids, key=lambda g: (-flow[g], g))
+
+    def module_path(fl):
+        if len(fl) == 1:
+            return str(fl[0].rel)
+        return os.path.commonpath([str(f.rel) for f in fl]) or '.'
+
+    modules = []
+    for mid, fl in mod_files.items():
+        modules.append({
+            'id': mid,
+            'title': mid.split('/')[-1] if '/' in mid else mid,
+            'path': module_path(fl),
+            **({'group': group_of(mid)} if emit_groups else {}),
+            'loc': sum(f.loc for f in fl),
+            'files': len(fl),
+        })
+    order = {g: i for i, g in enumerate(ordered_groups)}
+    modules.sort(key=lambda m: (order[group_of(m['id'])], -m['loc'], m['id']))
+
+    edges = sorted(
+        ({'from': a, 'to': b, 'weight': w} for (a, b), w in edge_weights.items()),
+        key=lambda e: (-e['weight'], e['from'], e['to']))
+    if len(edges) > max_edges:
+        eprint(f'airun9-arch-scan: keeping {max_edges} heaviest of {len(edges)} edges')
+        edges = edges[:max_edges]
+
+    schema = {
+        'version': 1,
+        'updatedAt': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'generatedBy': 'airun9-arch-scan (python)',
+        **({'groups': [{'id': g, 'title': g} for g in ordered_groups]} if emit_groups else {}),
+        'modules': modules,
+        'edges': edges,
+        'stats': {
+            'files': len(files),
+            'loc': sum(f.loc for f in files),
+            'depth': depth,
+            'parseErrors': parse_errors,
+        },
+    }
+    return schema
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog='airun9-arch-scan',
+        description='Mechanical architecture scan of a Python project: modules, '
+                    'LOC, import edges — in .airun9/architecture.json schema. '
+                    'Curate the output (summaries, semantic edges) before saving '
+                    'it as the real architecture.json.')
+    p.add_argument('root', nargs='?', default='.', help='project root (default: cwd)')
+    p.add_argument('--out', help='write JSON here instead of stdout')
+    p.add_argument('--include-tests', action='store_true',
+                   help='include test files (excluded by default)')
+    p.add_argument('--depth', type=int, choices=(1, 2, 3),
+                   help='module granularity: name-prefix depth (default: auto)')
+    p.add_argument('--max-modules', type=int, default=40,
+                   help='fold smallest modules into <pkg>/other past this (default 40)')
+    p.add_argument('--max-edges', type=int, default=200,
+                   help='keep only the N heaviest edges (default 200)')
+    args = p.parse_args()
+
+    root = Path(args.root).resolve()
+    if not root.is_dir():
+        eprint('airun9-arch-scan: not a directory:', root)
+        sys.exit(1)
+
+    schema = scan(root, args.include_tests, args.depth, args.max_modules, args.max_edges)
+    text = json.dumps(schema, indent=2) + '\n'
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        s = schema['stats']
+        eprint(f"airun9-arch-scan: {len(schema['modules'])} modules, "
+               f"{len(schema['edges'])} edges from {s['files']} files "
+               f"({s['loc']} loc) -> {out}")
+    else:
+        sys.stdout.write(text)
+
+
+if __name__ == '__main__':
+    main()
