@@ -40,19 +40,6 @@ float fbm(vec2 p) {
   return v;
 }
 
-float stars(vec2 uv, float scale) {
-  vec2 p = uv * scale;
-  vec2 g = floor(p);
-  vec2 f = fract(p) - 0.5;
-  float h = hash21(g);
-  float on = step(0.94, h);
-  vec2 pos = (vec2(hash21(g + 1.3), hash21(g + 2.7)) - 0.5) * 0.6;
-  float d = length(f - pos);
-  float star = smoothstep(0.025, 0.004, d);
-  float brightness = 0.5 + 0.5 * hash21(g + 9.1);
-  return on * star * brightness;
-}
-
 void main() {
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   float t = u_time;
@@ -62,38 +49,19 @@ void main() {
   vec2 pc = vec2(0.06, -R - 0.42);
   float d = length(uv - pc) - R; // signed height above the limb
 
-  // sky: near-black zenith, faintly lifting toward the horizon
+  // sky: near-black zenith, faintly lifting toward the horizon; the gradient
+  // line tilts and drifts almost imperceptibly so it never reads as static
+  float grad = smoothstep(0.75, -0.05, uv.y + 0.06 * sin(t * 0.02 + uv.x * 0.8));
   vec3 col = mix(
-    vec3(0.005, 0.008, 0.007),
-    vec3(0.016, 0.023, 0.020),
-    smoothstep(0.75, -0.05, uv.y)
+    vec3(0.004, 0.006, 0.006),
+    vec3(0.018, 0.026, 0.022),
+    grad
   );
 
-  // slow high-altitude haze
-  vec2 np = uv * 1.3 + vec2(t * 0.005, 0.0);
+  // broad drifting bands of faintly lifted color, like thin high clouds
+  vec2 np = uv * 0.9 + vec2(t * 0.006, t * 0.002);
   float n = fbm(np + fbm(np * 1.6) * 0.4);
-  col += smoothstep(0.55, 1.0, n) * vec3(0.015, 0.040, 0.033) * 0.45;
-
-  // stars wheel around a celestial pole off the upper-left; the near layer
-  // turns a touch faster than the far one for parallax depth
-  vec2 pole = vec2(-0.45, 0.62);
-  vec2 rel = uv - pole;
-
-  float angNear = t * 0.0022;
-  vec2 qNear = vec2(
-    rel.x * cos(angNear) - rel.y * sin(angNear),
-    rel.x * sin(angNear) + rel.y * cos(angNear)
-  ) + pole;
-
-  float angFar = t * 0.0009;
-  vec2 qFar = vec2(
-    rel.x * cos(angFar) - rel.y * sin(angFar),
-    rel.x * sin(angFar) + rel.y * cos(angFar)
-  ) + pole;
-
-  float skyMask = smoothstep(0.02, 0.14, d);
-  col += vec3(0.85, 1.0, 0.95) * stars(qNear, 14.0) * 0.55 * skyMask;
-  col += vec3(1.0) * stars(qFar + 4.7, 30.0) * 0.30 * skyMask;
+  col += smoothstep(0.40, 0.95, n) * vec3(0.014, 0.034, 0.028) * 0.5;
 
   // sunrise hotspot drifting slowly along the limb
   float sunX = 0.20 + 0.04 * sin(t * 0.03);

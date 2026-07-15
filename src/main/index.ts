@@ -4,14 +4,17 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import type { ProjectInfo } from '../shared/types'
 import { TerminalManager } from './terminals'
+import { BrowserManager } from './browser'
 import { WorkerManager } from './workers'
 import { LayoutManager } from './layout'
-import { BlocksManager, BLOCK_CSP } from './blocks'
+import { ProjectManager } from './projects'
+import { BlocksManager, BLOCK_CSP, BUILTIN_BLOCK_INFOS } from './blocks'
 import { buildApi, dispatch } from './api'
+import { BlockStorage } from './storage'
+import { ArchitectureManager } from './architecture'
+import { MemoryManager } from './memory'
 import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
 import { zshBootstrapEnv } from './shell-env'
-
-let currentProject: ProjectInfo | null = null
 
 // Block documents load from their own scheme so they carry their own CSP
 // instead of inheriting the app page's (srcdoc iframes inherit the embedder's
@@ -36,6 +39,7 @@ const terminals = new TerminalManager(() => ({
 }))
 const workers = new WorkerManager(terminals, cliBinDir)
 const layout = new LayoutManager()
+const projects = new ProjectManager()
 const blocks = new BlocksManager(
   is.dev
     ? join(app.getAppPath(), 'resources', 'block-sdk', 'index.ts')
@@ -43,23 +47,114 @@ const blocks = new BlocksManager(
   join(app.getAppPath(), 'node_modules')
 )
 
-// terminals are panes: their lifecycle maintains the layout tree
+// Restored layout panes reference dead sessions (PTYs and pages don't
+// survive a restart). Instead of dropping the panes — which collapsed their
+// splits and merged survivors into one tab group — respawn a fresh shell /
+// browser session into each pane. Lazy: runs when a project is activated,
+// so launching with many projects doesn't boot a pile of idle shells.
+// Re-activating an already-adopted project is a no-op (sessions are live).
+let adoptingPanes = false
+function adoptPanes(project: ProjectInfo): void {
+  const liveTerminals = new Set(terminals.list().map((t) => t.id))
+  const liveBrowsers = new Set(browsers.list().map((b) => b.id))
+  adoptingPanes = true
+  try {
+    for (const item of layout.items(project.id)) {
+      try {
+        if (item.block === 'terminal' && !liveTerminals.has(String(item.config.terminalId))) {
+          const info = terminals.create({ projectId: project.id, cwd: project.path })
+          layout.updateItemConfig(project.id, item.id, { terminalId: info.id })
+        } else if (item.block === 'browser' && !liveBrowsers.has(String(item.config.browserId))) {
+          // pane configs carry the last URL (stamped on navigation below)
+          const url = typeof item.config.url === 'string' ? item.config.url : undefined
+          const info = browsers.create({ projectId: project.id, url })
+          layout.updateItemConfig(project.id, item.id, { browserId: info.id, url: info.url })
+        }
+      } catch (error) {
+        console.error('pane adoption failed, dropping pane:', error)
+        layout.removeItem(project.id, item.id)
+      }
+    }
+    // a fresh (or all-closed) workspace starts with one terminal
+    if (!layout.items(project.id).some((item) => item.block === 'terminal')) {
+      adoptingPanes = false
+      terminals.create({ projectId: project.id, cwd: project.path })
+    }
+  } finally {
+    adoptingPanes = false
+  }
+}
+
+// terminals are panes: their lifecycle maintains their project's layout tree
 terminals.on('created', (info) => {
-  layout.addItem({ block: 'terminal', config: { terminalId: info.id } })
+  if (!adoptingPanes) {
+    layout.addItem(info.projectId, { block: 'terminal', config: { terminalId: info.id } })
+  }
 })
-terminals.on('closed', ({ id }) => {
-  layout.removeWhere((item) => item.block === 'terminal' && item.config.terminalId === id)
+terminals.on('closed', ({ id, projectId }) => {
+  layout.removeWhere(
+    projectId,
+    (item) => item.block === 'terminal' && item.config.terminalId === id
+  )
 })
 
+// browsers too — creating a session (user, agent, or a page's window.open)
+// is what puts the pane on screen
+const browsers = new BrowserManager()
+browsers.on('created', ({ info, position }) => {
+  if (!adoptingPanes) {
+    layout.addItem(
+      info.projectId,
+      { block: 'browser', config: { browserId: info.id, url: info.url } },
+      position
+    )
+  }
+})
+browsers.on('closed', ({ id, projectId }) => {
+  layout.removeWhere(projectId, (item) => item.block === 'browser' && item.config.browserId === id)
+})
+// stamp the live URL into the pane config so a restart restores the page
+browsers.on('updated', (info) => {
+  const item = layout
+    .items(info.projectId)
+    .find((i) => i.block === 'browser' && i.config.browserId === info.id)
+  if (item && item.config.url !== info.url) {
+    layout.updateItemConfig(info.projectId, item.id, { ...item.config, url: info.url })
+  }
+})
+
+const architecture = new ArchitectureManager()
+const memory = new MemoryManager()
+
+// project lifecycle: activation adopts panes; closing kills the project's
+// sessions (its layout file survives for reopening the same folder)
+projects.on('activated', (project: ProjectInfo) => {
+  architecture.watch(project.id, project.path)
+  adoptPanes(project)
+})
+projects.on('closed', (project: ProjectInfo) => {
+  workers.closeProject(project.id)
+  for (const terminal of terminals.list(project.id)) terminals.close(terminal.id)
+  for (const browser of browsers.list(project.id)) browsers.close(browser.id)
+  architecture.unwatch(project.id)
+  layout.unload(project.id)
+})
+
+// projects restored from the last session: watch them all (badges need
+// their events), adopt only the active one — the rest adopt on activation.
+// Adoption itself runs in whenReady: browser sessions need the app ready.
+for (const project of projects.list()) architecture.watch(project.id, project.path)
+
 const api = buildApi({
+  projects,
   terminals,
+  browsers,
   workers,
   layout,
   blocks,
-  getProject: () => currentProject,
-  setProject: (project) => {
-    currentProject = project
-  }
+  storage: new BlockStorage(),
+  architecture,
+  memory
 })
 
 const socketServer = startSocketServer(api)
@@ -70,19 +165,25 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+projects.on('changed', (state) => broadcast('project:changed', state))
 terminals.on('created', (info) => broadcast('terminal:created', info))
 terminals.on('data', (event) => broadcast('terminal:data', event))
 terminals.on('exit', (event) => broadcast('terminal:exit', event))
 terminals.on('closed', (event) => broadcast('terminal:closed', event))
+browsers.on('created', ({ info }) => broadcast('browser:created', info))
+browsers.on('updated', (info) => broadcast('browser:updated', info))
+browsers.on('closed', (event) => broadcast('browser:closed', event))
 workers.on('created', (worker) => broadcast('worker:created', worker))
 workers.on('updated', (worker) => broadcast('worker:updated', worker))
 workers.on('request', (request) => broadcast('worker:request', request))
 workers.on('request-resolved', (resolution) => broadcast('worker:request-resolved', resolution))
 layout.on('changed', (root) => broadcast('layout:changed', root))
-blocks.on('changed', (list) => broadcast('blocks:changed', list))
+blocks.on('changed', (list) => broadcast('blocks:changed', [...BUILTIN_BLOCK_INFOS, ...list]))
 blocks.on('updated', (event) => broadcast('block:updated', event))
 blocks.on('grant-request', (request) => broadcast('block:grant-request', request))
 blocks.on('grant-resolved', (resolution) => broadcast('block:grant-resolved', resolution))
+architecture.on('changed', (state) => broadcast('architecture:changed', state))
+memory.on('updated', (event) => broadcast('memory:updated', event))
 
 ipcMain.handle('rpc', async (_event, method: string, params: unknown) => {
   try {
@@ -112,7 +213,9 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // browser blocks embed pages in <webview> (guests stay sandboxed)
+      webviewTag: true
     }
   })
 
@@ -170,7 +273,15 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // lazy launch restore: only the active project's panes respawn now;
+  // background projects adopt on their first activation
+  const restoredActive = projects.active()
+  if (restoredActive) adoptPanes(restoredActive)
+
   createWindow()
+
+  // watchers + backfill of existing agent transcripts, after the window is up
+  memory.start()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
@@ -182,6 +293,9 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   terminals.disposeAll()
   blocks.dispose()
+  layout.dispose()
+  architecture.dispose()
+  memory.dispose()
   stopSocketServer(socketServer)
 })
 

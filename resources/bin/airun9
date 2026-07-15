@@ -6,7 +6,8 @@
  *
  * Usage:
  *   airun9 ping
- *   airun9 project get
+ *   airun9 project get                                 # this terminal's project
+ *   airun9 project list                                # all open projects + active
  *
  *   # read-only research worker, spawns immediately.
  *   # --wait blocks until it finishes and prints the results (run this as a
@@ -32,10 +33,29 @@
  *   airun9 terminal list|create|read
  *   airun9 terminal close <id>                         # close a terminal tab
  *
+ *   # embedded browser panes (shared persistent profile — the user's logins).
+ *   # The primary agent loop: navigate to the dev server, screenshot, read
+ *   # the page text and console, fix, reload.
+ *   airun9 browser create [--url <url>] [--position tab|right|down|left|up]
+ *   airun9 browser list
+ *   airun9 browser navigate <id> --url <url>
+ *   airun9 browser back|forward|reload <id>
+ *   airun9 browser screenshot <id> --path out.png     # PNG you can read as an image
+ *   airun9 browser text <id>                          # rendered page text
+ *   airun9 browser console <id> [--tail 20000]        # page console output
+ *   airun9 browser close <id>                         # close page AND its tab
+ *
  *   airun9 block list                                  # compiled custom blocks
- *   airun9 block open <name> [--position tab|right|down]
+ *   airun9 block open <name> [--position tab|right|down|left|up]
  *   airun9 layout get                                  # the workspace layout tree (JSON)
  *   airun9 layout set --json '<tree>'                  # replace it (or pipe JSON on stdin)
+ *
+ *   # cross-agent conversation memory (claude, gpt/codex, grok sessions on
+ *   # this machine, ingested from their transcript files)
+ *   airun9 memory search --query "..." [--agent claude|gpt|grok] [--project] [--limit 20]
+ *   airun9 memory sessions [--agent claude|gpt|grok] [--project] [--limit 50]
+ *   airun9 memory messages <sessionId> [--limit 200] [--offset 0]
+ *   airun9 memory stats
  */
 'use strict'
 
@@ -44,6 +64,10 @@ const os = require('os')
 const path = require('path')
 
 const SOCKET_PATH = process.env.AIRUN9_SOCKET || path.join(os.homedir(), '.airun9', 'airun9.sock')
+// Terminals are project-bound: managed terminals carry AIRUN9_PROJECT_ID,
+// and every request forwards it so the API acts on THIS terminal's project
+// no matter which project the user is currently looking at.
+const PROJECT_ID = process.env.AIRUN9_PROJECT_ID || undefined
 
 function fail(message) {
   process.stderr.write(`airun9: ${message}\n`)
@@ -76,7 +100,7 @@ function call(method, params) {
     const socket = net.createConnection(SOCKET_PATH)
     let buffer = ''
     socket.on('connect', () => {
-      socket.write(JSON.stringify({ id: 1, method, params }) + '\n')
+      socket.write(JSON.stringify({ id: 1, method, params, project: PROJECT_ID }) + '\n')
     })
     socket.on('data', (chunk) => {
       buffer += chunk.toString('utf8')
@@ -163,6 +187,8 @@ async function main() {
       return printResult(await call('app.ping'))
     case 'project get':
       return printResult(await call('project.get'))
+    case 'project list':
+      return printResult(await call('project.list'))
     case 'worker scout': {
       if (!flags.prompt || flags.prompt === true) fail('worker scout requires --prompt "..."')
       const params = { prompt: flags.prompt }
@@ -237,16 +263,87 @@ async function main() {
     case 'terminal close':
       if (!id) fail('usage: airun9 terminal close <id>')
       return printResult(await call('terminal.close', { id }))
+    case 'browser create': {
+      const params = {}
+      if (typeof flags.url === 'string') params.url = flags.url
+      if (typeof flags.position === 'string') params.position = flags.position
+      return printResult(await call('browser.create', params))
+    }
+    case 'browser list':
+      return printResult(await call('browser.list'))
+    case 'browser get':
+      if (!id) fail('usage: airun9 browser get <id>')
+      return printResult(await call('browser.get', { id }))
+    case 'browser navigate':
+      if (!id || typeof flags.url !== 'string')
+        fail('usage: airun9 browser navigate <id> --url <url>')
+      return printResult(await call('browser.navigate', { id, url: flags.url }))
+    case 'browser back':
+      if (!id) fail('usage: airun9 browser back <id>')
+      return printResult(await call('browser.back', { id }))
+    case 'browser forward':
+      if (!id) fail('usage: airun9 browser forward <id>')
+      return printResult(await call('browser.forward', { id }))
+    case 'browser reload':
+      if (!id) fail('usage: airun9 browser reload <id>')
+      return printResult(await call('browser.reload', { id }))
+    case 'browser screenshot': {
+      if (!id) fail('usage: airun9 browser screenshot <id> --path <file.png>')
+      const params = { id }
+      if (typeof flags.path === 'string') params.path = flags.path
+      const shot = await call('browser.screenshot', params)
+      // without --path the API returns a data URL; too noisy for a terminal
+      return printResult(shot.path ? shot : { width: shot.width, height: shot.height })
+    }
+    case 'browser text': {
+      if (!id) fail('usage: airun9 browser text <id>')
+      const page = await call('browser.text', { id })
+      process.stdout.write(`${page.title} — ${page.url}\n\n${page.text}\n`)
+      if (page.truncated) process.stderr.write('airun9: page text truncated\n')
+      return
+    }
+    case 'browser console':
+      if (!id) fail('usage: airun9 browser console <id> [--tail 20000]')
+      return printRead(await call('browser.console', { id, tail }), flags)
+    case 'browser close':
+      if (!id) fail('usage: airun9 browser close <id>')
+      return printResult(await call('browser.close', { id }))
     case 'block list':
       return printResult(await call('block.list'))
     case 'block open': {
-      if (!id) fail('usage: airun9 block open <name> [--position tab|right|down]')
+      if (!id) fail('usage: airun9 block open <name> [--position tab|right|down|left|up]')
       const params = { name: id }
       if (typeof flags.position === 'string') params.position = flags.position
       return printResult(await call('block.open', params))
     }
     case 'layout get':
       return printResult(await call('layout.get'))
+    case 'memory search': {
+      if (!flags.query || flags.query === true) fail('memory search requires --query "..."')
+      const params = { query: flags.query }
+      if (typeof flags.agent === 'string') params.agent = flags.agent
+      if (typeof flags.cwd === 'string') params.cwd = flags.cwd
+      if (flags.project) params.project = true
+      if (flags.limit) params.limit = Number(flags.limit)
+      return printResult(await call('memory.search', params))
+    }
+    case 'memory sessions': {
+      const params = {}
+      if (typeof flags.agent === 'string') params.agent = flags.agent
+      if (typeof flags.cwd === 'string') params.cwd = flags.cwd
+      if (flags.project) params.project = true
+      if (flags.limit) params.limit = Number(flags.limit)
+      return printResult(await call('memory.sessions', params))
+    }
+    case 'memory messages': {
+      if (!id) fail('usage: airun9 memory messages <sessionId>')
+      const params = { sessionId: id }
+      if (flags.limit) params.limit = Number(flags.limit)
+      if (flags.offset) params.offset = Number(flags.offset)
+      return printResult(await call('memory.messages', params))
+    }
+    case 'memory stats':
+      return printResult(await call('memory.stats'))
     case 'layout set': {
       const raw = typeof flags.json === 'string' ? flags.json : await readStdin()
       if (!raw.trim()) fail('layout set requires --json or JSON on stdin')
@@ -261,7 +358,7 @@ async function main() {
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close | block list|open | layout get|set'
+          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close | browser create|list|get|navigate|back|forward|reload|screenshot|text|console|close | block list|open | layout get|set | memory search|sessions|messages|stats'
       )
   }
 }

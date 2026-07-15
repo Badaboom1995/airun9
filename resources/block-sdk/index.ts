@@ -64,6 +64,31 @@ export function rpc<T = unknown>(method: string, params?: unknown): Promise<T> {
   })
 }
 
+/**
+ * Per-block persistent key-value store. The sandboxed iframe has a null
+ * origin, so localStorage/indexedDB throw — this is the durable alternative.
+ * Namespacing is enforced by the host (it stamps the block's name onto the
+ * call), so declaring storage.get/storage.set in block.json is all it takes.
+ *
+ * Scope defaults to the current project — a notes block's notes follow the
+ * project the user has open. Pass { scope: 'global' } to share one store
+ * across all projects.
+ */
+export interface StorageOptions {
+  scope?: 'project' | 'global'
+}
+
+export const storage = {
+  get<T = unknown>(key: string, options?: StorageOptions): Promise<T | null> {
+    return rpc<{ value: T | null }>('storage.get', { key, scope: options?.scope }).then(
+      (r) => r.value
+    )
+  },
+  set(key: string, value: unknown, options?: StorageOptions): Promise<void> {
+    return rpc('storage.set', { key, value, scope: options?.scope }).then(() => undefined)
+  }
+}
+
 /** Subscribe to an app push channel (terminal:*, worker:*, layout:changed…) */
 export function on(channel: string, callback: (payload: unknown) => void): () => void {
   if (!listeners.has(channel)) {

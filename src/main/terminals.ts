@@ -14,6 +14,8 @@ const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 
 export interface CreateTerminalOptions {
+  /** Project this terminal (and any agent inside it) is bound to */
+  projectId: string
   cwd: string
   title?: string
   /** Run this command via an interactive login shell instead of a plain shell */
@@ -57,6 +59,11 @@ export class TerminalManager extends EventEmitter {
         ...process.env,
         ...this.baseEnv(),
         ...options.env,
+        // per-terminal binding: the airun9 CLI sends these with every
+        // request, so agents always operate on THEIR project, regardless
+        // of which project the user is currently looking at
+        AIRUN9_PROJECT_ID: options.projectId,
+        AIRUN9_TERMINAL_ID: id,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor'
       } as Record<string, string>
@@ -64,6 +71,7 @@ export class TerminalManager extends EventEmitter {
 
     const info: TerminalInfo = {
       id,
+      projectId: options.projectId,
       title: options.title ?? `Terminal ${this.terminals.size + 1}`,
       cwd: options.cwd,
       cols: DEFAULT_COLS,
@@ -96,8 +104,9 @@ export class TerminalManager extends EventEmitter {
     return info
   }
 
-  list(): TerminalInfo[] {
-    return [...this.terminals.values()].map((t) => t.info)
+  list(projectId?: string): TerminalInfo[] {
+    const all = [...this.terminals.values()].map((t) => t.info)
+    return projectId ? all.filter((t) => t.projectId === projectId) : all
   }
 
   get(id: string): TerminalInfo {
@@ -134,7 +143,7 @@ export class TerminalManager extends EventEmitter {
     const t = this.managed(id)
     t.pty?.kill()
     this.terminals.delete(id)
-    this.emit('closed', { id })
+    this.emit('closed', { id, projectId: t.info.projectId })
   }
 
   /** Kill the process but keep the terminal (worker stop) */

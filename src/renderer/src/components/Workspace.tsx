@@ -2,14 +2,13 @@ import { useEffect } from 'react'
 import { api, events } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
 import LayoutRenderer from './LayoutRenderer'
+import ProjectsRail from './ProjectsRail'
+import WebviewLayer from './WebviewLayer'
 import WorkerApprovalModal from './WorkerApprovalModal'
 import BlockGrantModal from './BlockGrantModal'
 
-// Survives StrictMode double-mount: only ever auto-create the first terminal once
-let bootstrapped = false
-
 function Workspace(): React.JSX.Element {
-  const project = useWorkspaceStore((s) => s.project)
+  const activeProjectId = useWorkspaceStore((s) => s.activeProjectId)
   const layout = useWorkspaceStore((s) => s.layout)
   const {
     setTerminals,
@@ -18,8 +17,14 @@ function Workspace(): React.JSX.Element {
     markTerminalExited,
     setWorkers,
     upsertWorker,
+    setWorkerRequests,
+    upsertWorkerRequest,
+    removeWorkerRequest,
     setLayout,
-    setBlocks
+    setBlocks,
+    setBrowsers,
+    upsertBrowser,
+    removeBrowser
   } = useWorkspaceStore.getState()
 
   useEffect(() => {
@@ -30,32 +35,54 @@ function Workspace(): React.JSX.Element {
       events.onTerminalExit(({ id, exitCode }) => markTerminalExited(id, exitCode)),
       events.onWorkerCreated(upsertWorker),
       events.onWorkerUpdated(upsertWorker),
-      events.onLayoutChanged(setLayout),
+      events.onWorkerRequest(upsertWorkerRequest),
+      events.onWorkerRequestResolved(({ requestId }) => removeWorkerRequest(requestId)),
+      events.onBrowserCreated(upsertBrowser),
+      events.onBrowserUpdated(upsertBrowser),
+      events.onBrowserClosed(({ id }) => removeBrowser(id)),
+      // trees are per-project; only the visible one lives in the store
+      events.onLayoutChanged(({ projectId, root }) => {
+        if (projectId === useWorkspaceStore.getState().activeProjectId) setLayout(root)
+      }),
       events.onBlocksChanged(setBlocks)
     ]
 
-    void api.getLayout().then(setLayout)
+    void api.listBrowsers().then(setBrowsers)
     void api.listWorkers().then(setWorkers)
+    void api.pendingWorkerRequests().then(setWorkerRequests)
     void api.listBlocks().then(setBlocks)
-    void api.listTerminals().then((list) => {
-      setTerminals(list)
-      if (list.length === 0 && !bootstrapped) {
-        bootstrapped = true
-        void api.createTerminal()
-      }
-    })
+    void api.listTerminals().then(setTerminals)
 
     return () => offs.forEach((off) => off())
   }, [
     markTerminalExited,
+    removeBrowser,
     removeTerminal,
+    removeWorkerRequest,
     setBlocks,
+    setBrowsers,
     setLayout,
     setTerminals,
+    setWorkerRequests,
     setWorkers,
+    upsertBrowser,
     upsertTerminal,
-    upsertWorker
+    upsertWorker,
+    upsertWorkerRequest
   ])
+
+  // the visible tree follows the active project (main adopts panes on
+  // activation, so by the time this resolves the sessions are alive)
+  useEffect(() => {
+    if (!activeProjectId) return
+    let stale = false
+    void api.getLayout().then((root) => {
+      if (!stale) setLayout(root)
+    })
+    return () => {
+      stale = true
+    }
+  }, [activeProjectId, setLayout])
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[#0b0e0c] text-neutral-200 antialiased">
@@ -65,14 +92,13 @@ function Workspace(): React.JSX.Element {
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <span className="font-michroma text-[11px] tracking-[0.25em] text-neutral-400">AIRUN9</span>
-        <span className="text-[12px] text-neutral-500">{project?.name}</span>
-        <span className="truncate text-[11px] text-neutral-700">{project?.path}</span>
+        <ProjectsRail />
       </div>
 
       {/* the layout tree is the workspace (ADR-0001) */}
       <div className="relative min-h-0 flex-1">
         {layout ? (
-          <LayoutRenderer node={layout} first />
+          <LayoutRenderer node={layout} />
         ) : (
           <div className="flex h-full items-center justify-center text-[13px] text-neutral-600">
             Loading workspace…
@@ -81,6 +107,10 @@ function Workspace(): React.JSX.Element {
         <WorkerApprovalModal />
         <BlockGrantModal />
       </div>
+
+      {/* all <webview>s live here permanently — never unmounted by tab or
+          project switches, so pages survive in the background */}
+      <WebviewLayer />
     </div>
   )
 }

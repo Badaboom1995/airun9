@@ -1,7 +1,6 @@
 import { IconFolderOpen, IconGitBranch, IconTerminal2 } from '@tabler/icons-react'
 
 import { api } from '../lib/api'
-import { useWorkspaceStore } from '../stores/workspace'
 import SpaceShader from './SpaceShader'
 
 const actions = [
@@ -20,13 +19,12 @@ const recentProjects = [
 ]
 
 function Welcome(): React.JSX.Element {
-  const setProject = useWorkspaceStore((s) => s.setProject)
-
   const openProject = async (path?: string): Promise<void> => {
     const target = path ?? (await window.api.pickDirectory())
     if (!target) return
     try {
-      setProject(await api.openProject(target))
+      // the project:changed broadcast updates the store and swaps the screen
+      await api.openProject(target)
     } catch (error) {
       console.error('Failed to open project:', error)
     }

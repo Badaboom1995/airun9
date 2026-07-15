@@ -16,10 +16,58 @@ export const BLOCKS_DIR = join(homedir(), '.airun9', 'blocks')
 export const BLOCK_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
 
-/** Methods any block may call once declared — reading is free (ADR-0004) */
-const READ_ONLY_METHODS = new Set([
+/** Built-in blocks, listed alongside custom ones so callers see one catalog */
+export const BUILTIN_BLOCK_INFOS: BlockInfo[] = [
+  {
+    name: 'hello',
+    manifest: { name: 'hello', title: 'Hello', capabilities: [] },
+    error: null,
+    builtin: true
+  },
+  {
+    name: 'workers',
+    manifest: { name: 'workers', title: 'Workers', capabilities: [] },
+    error: null,
+    builtin: true
+  },
+  {
+    name: 'projects',
+    manifest: { name: 'projects', title: 'Projects', capabilities: [] },
+    error: null,
+    builtin: true
+  },
+  {
+    name: 'architecture',
+    manifest: { name: 'architecture', title: 'Architecture', capabilities: [] },
+    error: null,
+    builtin: true
+  },
+  {
+    name: 'files',
+    manifest: { name: 'files', title: 'Files', capabilities: [] },
+    error: null,
+    builtin: true
+  },
+  {
+    name: 'browser',
+    manifest: { name: 'browser', title: 'Browser', capabilities: [] },
+    error: null,
+    builtin: true
+  }
+]
+
+/**
+ * Methods any block may call once declared, without a user grant (ADR-0004):
+ * reading is free, and storage.* only touches the block's own namespace.
+ */
+const AUTO_GRANTED_METHODS = new Set([
+  'storage.get',
+  'storage.set',
   'app.ping',
   'project.get',
+  'architecture.get',
+  'fs.list',
+  'fs.read',
   'terminal.list',
   'terminal.get',
   'terminal.read',
@@ -30,7 +78,11 @@ const READ_ONLY_METHODS = new Set([
   'worker.result',
   'worker.wait',
   'layout.get',
-  'block.list'
+  'block.list',
+  // list/get expose only page metadata; text/screenshot/console expose the
+  // content of the user's logged-in pages, so those need an explicit grant
+  'browser.list',
+  'browser.get'
 ])
 
 interface CompiledBlock {
@@ -107,7 +159,7 @@ export class BlocksManager extends EventEmitter {
     const block = this.blocks.get(name)
     if (!block) throw new Error(`Unknown block: ${name}`)
     const capabilities = block.info.manifest.capabilities ?? []
-    const mutating = capabilities.filter((c) => !READ_ONLY_METHODS.has(c))
+    const mutating = capabilities.filter((c) => !AUTO_GRANTED_METHODS.has(c))
     if (mutating.length === 0) return { granted: capabilities }
 
     if (this.grants.get(name) === undefined) {
@@ -126,7 +178,7 @@ export class BlocksManager extends EventEmitter {
 
     return this.grants.get(name)
       ? { granted: capabilities }
-      : { granted: capabilities.filter((c) => READ_ONLY_METHODS.has(c)) }
+      : { granted: capabilities.filter((c) => AUTO_GRANTED_METHODS.has(c)) }
   }
 
   pendingGrantRequests(): BlockGrantRequest[] {
@@ -175,13 +227,30 @@ export class BlocksManager extends EventEmitter {
         }
       }
 
+      // the boundary keeps a crashing block visible (error text) instead of
+      // React silently unmounting to a blank pane
       const wrapper = `
         import Component from './index.tsx'
-        import { createElement } from 'react'
+        import { Component as ReactComponent, createElement } from 'react'
         import { createRoot } from 'react-dom/client'
         import { __connect } from 'airun9'
+        class Boundary extends ReactComponent {
+          state = { error: null }
+          static getDerivedStateFromError(error) { return { error } }
+          render() {
+            if (this.state.error === null) return this.props.children
+            const message = this.state.error?.message ?? String(this.state.error)
+            return createElement(
+              'div',
+              { style: { padding: 16, color: '#e08a7a', fontSize: 12, whiteSpace: 'pre-wrap' } },
+              'Block crashed: ' + message
+            )
+          }
+        }
         __connect().then(() => {
-          createRoot(document.getElementById('root')).render(createElement(Component))
+          createRoot(document.getElementById('root')).render(
+            createElement(Boundary, null, createElement(Component))
+          )
         })
       `
       const result = await build({

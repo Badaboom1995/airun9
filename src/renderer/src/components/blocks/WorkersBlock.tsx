@@ -1,5 +1,5 @@
 import { IconPlayerStop, IconX } from '@tabler/icons-react'
-import IconAstronaut from '../icons/IconAstronaut'
+import IconOrbit from '../icons/IconOrbit'
 import type { WorkerInfo } from '../../../../shared/types'
 import { api } from '../../lib/api'
 import { useWorkspaceStore } from '../../stores/workspace'
@@ -47,16 +47,22 @@ function WorkerRow({ worker }: { worker: WorkerInfo }): React.JSX.Element {
   )
 }
 
-/** Built-in status board (ADR-0009): every worker, live, with shutdown controls */
+/** Built-in status board (ADR-0009): the active project's workers, live,
+ * with shutdown controls — background projects surface in the rail badges */
 function WorkersBlock(): React.JSX.Element {
-  const workers = Object.values(useWorkspaceStore((s) => s.workers)).sort(
-    (a, b) => b.createdAt - a.createdAt
-  )
+  const activeProjectId = useWorkspaceStore((s) => s.activeProjectId)
+  const workers = Object.values(useWorkspaceStore((s) => s.workers))
+    .filter((w) => w.projectId === activeProjectId)
+    .sort((a, b) => b.createdAt - a.createdAt)
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
-        <IconAstronaut className="size-4 text-neutral-400" stroke={1.75} />
+        <IconOrbit
+          className="size-4 text-neutral-400"
+          stroke={1.75}
+          spinning={workers.some((w) => w.status === 'running')}
+        />
         <h3 className="text-[11px] tracking-[0.2em] text-neutral-400">WORKERS</h3>
         <span className="text-[11px] text-neutral-600">
           {workers.filter((w) => w.status === 'running').length} working

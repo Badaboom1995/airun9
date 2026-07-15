@@ -1,25 +1,35 @@
 import { create } from 'zustand'
 import type {
   BlockInfo,
+  BrowserInfo,
   LayoutNode,
   ProjectInfo,
+  ProjectsState,
   TerminalInfo,
-  WorkerInfo
+  WorkerInfo,
+  WorkerRequest
 } from '../../../shared/types'
 
 interface WorkspaceState {
-  project: ProjectInfo | null
+  /** all open projects + which one the user is looking at */
+  projects: ProjectInfo[]
+  activeProjectId: string | null
+  /** ALL projects' sessions (badges need them); views filter by project */
   terminals: TerminalInfo[]
+  /** embedded browser pages, for tab decoration and the browser block UI */
+  browsers: BrowserInfo[]
   /** keyed by terminalId for tab decoration */
   workers: Record<string, WorkerInfo>
-  /** mirror of main's layout tree; UI renders this, mutations go via API */
+  /** pending full-worker approvals across all projects */
+  workerRequests: WorkerRequest[]
+  /** the ACTIVE project's layout tree; background trees live in main */
   layout: LayoutNode | null
   blocks: BlockInfo[]
   activeTerminalId: string | null
   setLayout: (layout: LayoutNode) => void
   setBlocks: (blocks: BlockInfo[]) => void
 
-  setProject: (project: ProjectInfo | null) => void
+  setProjects: (state: ProjectsState) => void
   setTerminals: (terminals: TerminalInfo[]) => void
   upsertTerminal: (info: TerminalInfo) => void
   removeTerminal: (id: string) => void
@@ -27,19 +37,35 @@ interface WorkspaceState {
   setActiveTerminal: (id: string | null) => void
   setWorkers: (workers: WorkerInfo[]) => void
   upsertWorker: (worker: WorkerInfo) => void
+  setWorkerRequests: (requests: WorkerRequest[]) => void
+  upsertWorkerRequest: (request: WorkerRequest) => void
+  removeWorkerRequest: (requestId: string) => void
+  setBrowsers: (browsers: BrowserInfo[]) => void
+  upsertBrowser: (info: BrowserInfo) => void
+  removeBrowser: (id: string) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  project: null,
+  projects: [],
+  activeProjectId: null,
   terminals: [],
+  browsers: [],
   workers: {},
+  workerRequests: [],
   layout: null,
   blocks: [],
   activeTerminalId: null,
   setLayout: (layout) => set({ layout }),
   setBlocks: (blocks) => set({ blocks }),
 
-  setProject: (project) => set({ project }),
+  setProjects: ({ projects, activeId }) =>
+    set((state) => ({
+      projects,
+      activeProjectId: activeId,
+      // switching projects invalidates the previous tree until the fresh
+      // one arrives — render nothing stale in between
+      layout: activeId === state.activeProjectId ? state.layout : null
+    })),
 
   setTerminals: (terminals) =>
     set((state) => ({
@@ -86,5 +112,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set({ workers: Object.fromEntries(workers.map((w) => [w.terminalId, w])) }),
 
   upsertWorker: (worker) =>
-    set((state) => ({ workers: { ...state.workers, [worker.terminalId]: worker } }))
+    set((state) => ({ workers: { ...state.workers, [worker.terminalId]: worker } })),
+
+  setWorkerRequests: (workerRequests) => set({ workerRequests }),
+
+  upsertWorkerRequest: (request) =>
+    set((state) => ({
+      workerRequests: state.workerRequests.some((r) => r.id === request.id)
+        ? state.workerRequests
+        : [...state.workerRequests, request]
+    })),
+
+  removeWorkerRequest: (requestId) =>
+    set((state) => ({
+      workerRequests: state.workerRequests.filter((r) => r.id !== requestId)
+    })),
+
+  setBrowsers: (browsers) => set({ browsers }),
+
+  upsertBrowser: (info) =>
+    set((state) => ({
+      browsers: state.browsers.some((b) => b.id === info.id)
+        ? state.browsers.map((b) => (b.id === info.id ? info : b))
+        : [...state.browsers, info]
+    })),
+
+  removeBrowser: (id) => set((state) => ({ browsers: state.browsers.filter((b) => b.id !== id) }))
 }))

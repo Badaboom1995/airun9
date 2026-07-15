@@ -46,6 +46,9 @@ export interface FullRequestOptions {
 
 interface PendingRequest {
   request: WorkerRequest
+  /** Captured at request time — approval spawns into THIS project even if
+   * the user is looking at another one when they decide */
+  project: ProjectInfo
   resolve: (workers: WorkerInfo[]) => void
   reject: (error: Error) => void
 }
@@ -93,7 +96,8 @@ export class WorkerManager extends EventEmitter {
           kind: 'scout',
           mode: 'plan',
           location: 'shared',
-          cwd: project.path
+          cwd: project.path,
+          projectId: project.id
         })
       )
     )
@@ -104,9 +108,10 @@ export class WorkerManager extends EventEmitter {
    * decides in the app. There is deliberately no API path that spawns a
    * mutating worker without this.
    */
-  requestFull(options: FullRequestOptions): Promise<WorkerInfo[]> {
+  requestFull(options: FullRequestOptions, project: ProjectInfo): Promise<WorkerInfo[]> {
     const request: WorkerRequest = {
       id: `req_${nanoid(8)}`,
+      projectId: project.id,
       prompt: options.prompt,
       name: options.name ?? null,
       count: options.count ?? 1,
@@ -116,7 +121,7 @@ export class WorkerManager extends EventEmitter {
       createdAt: Date.now()
     }
     return new Promise<WorkerInfo[]>((resolve, reject) => {
-      this.pending.set(request.id, { request, resolve, reject })
+      this.pending.set(request.id, { request, project, resolve, reject })
       this.emit('request', request)
     })
   }
@@ -125,7 +130,7 @@ export class WorkerManager extends EventEmitter {
     return [...this.pending.values()].map((p) => p.request)
   }
 
-  async resolveRequest(decision: WorkerRequestDecision, project: ProjectInfo): Promise<void> {
+  async resolveRequest(decision: WorkerRequestDecision): Promise<void> {
     const pending = this.pending.get(decision.requestId)
     if (!pending) throw new Error(`Unknown worker request: ${decision.requestId}`)
     this.pending.delete(decision.requestId)
@@ -136,7 +141,7 @@ export class WorkerManager extends EventEmitter {
       return
     }
 
-    const { request } = pending
+    const { request, project } = pending
     try {
       const workers = await Promise.all(
         Array.from({ length: request.count }, async (_, i) => {
@@ -151,7 +156,8 @@ export class WorkerManager extends EventEmitter {
             kind: 'full',
             mode: decision.mode,
             location: decision.location,
-            cwd
+            cwd,
+            projectId: project.id
           })
         })
       )
@@ -237,8 +243,24 @@ export class WorkerManager extends EventEmitter {
     return { status: worker.status, text, transcriptPath: worker.transcriptPath }
   }
 
-  list(): WorkerInfo[] {
-    return [...this.workers.values()]
+  list(projectId?: string): WorkerInfo[] {
+    const all = [...this.workers.values()]
+    return projectId ? all.filter((w) => w.projectId === projectId) : all
+  }
+
+  /** Project is closing: reject its pending approvals, stop its workers */
+  closeProject(projectId: string): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.request.projectId !== projectId) continue
+      this.pending.delete(id)
+      this.emit('request-resolved', { requestId: id, approved: false })
+      pending.reject(new Error('Project was closed before the request was decided'))
+    }
+    for (const worker of this.workers.values()) {
+      if (worker.projectId === projectId && worker.status !== 'exited') {
+        this.terminals.kill(worker.terminalId)
+      }
+    }
   }
 
   get(id: string): WorkerInfo {
@@ -279,6 +301,7 @@ export class WorkerManager extends EventEmitter {
     mode: WorkerMode
     location: WorkerLocation
     cwd: string
+    projectId: string
   }): Promise<WorkerInfo> {
     const running = [...this.workers.values()].filter((w) => w.status === 'running')
     if (running.length >= MAX_RUNNING_WORKERS) {
@@ -299,6 +322,7 @@ export class WorkerManager extends EventEmitter {
       .join(' ')
 
     const terminal = this.terminals.create({
+      projectId: options.projectId,
       cwd: options.cwd,
       title: options.name,
       command,
@@ -308,6 +332,7 @@ export class WorkerManager extends EventEmitter {
 
     const worker: WorkerInfo = {
       id,
+      projectId: options.projectId,
       name: options.name,
       prompt: options.prompt,
       terminalId: terminal.id,

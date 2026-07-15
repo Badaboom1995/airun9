@@ -5,6 +5,8 @@ export type TerminalStatus = 'running' | 'exited'
 
 export interface TerminalInfo {
   id: string
+  /** Project this terminal belongs to; agents inside operate on it */
+  projectId: string
   title: string
   cwd: string
   cols: number
@@ -18,6 +20,7 @@ export interface TerminalInfo {
 
 export interface WorkerInfo {
   id: string
+  projectId: string
   name: string
   prompt: string
   terminalId: string
@@ -47,6 +50,9 @@ export type WorkerStatus = 'running' | 'done' | 'exited'
 /** A pending "spawn full worker" approval shown to the user in the app */
 export interface WorkerRequest {
   id: string
+  /** Captured when the request is made — approval spawns into THIS project,
+   * regardless of which project is active when the user decides */
+  projectId: string
   prompt: string
   name: string | null
   count: number
@@ -63,9 +69,25 @@ export interface WorkerRequestDecision {
   location: WorkerLocation
 }
 
+/**
+ * An open project (a folder, usually a repo). Several can be open at once;
+ * each owns its layout tree, terminals, browsers and agents. `id` is derived
+ * deterministically from the realpath, so closing and reopening a folder
+ * finds its persisted layout again.
+ */
 export interface ProjectInfo {
+  id: string
   path: string
   name: string
+  /** Reserved for worktrees: a worktree is a child workspace of its repo */
+  parentId: string | null
+  createdAt: number
+}
+
+/** project:changed payload: the full switcher state */
+export interface ProjectsState {
+  projects: ProjectInfo[]
+  activeId: string | null
 }
 
 /**
@@ -92,6 +114,23 @@ export interface TerminalExitEvent {
 }
 
 /**
+ * An embedded browser page (one page per block; pane tabs are the browser
+ * tabs). Sessions share the persistent `persist:airun9-browser` partition,
+ * so logins survive restarts and are common to all browser blocks.
+ */
+export interface BrowserInfo {
+  id: string
+  projectId: string
+  url: string
+  title: string
+  favicon: string | null
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  createdAt: number
+}
+
+/**
  * Layout is pure serialized data (ADR-0001): a split tree whose leaves are
  * tab groups of block instances. Main owns it; renderer renders it; agents
  * edit it via layout.get/set.
@@ -107,6 +146,11 @@ export interface TabsNode {
   type: 'tabs'
   id: string
   active: string | null
+  /** The workspace's main group: new 'tab'-position panes land here and the
+   * +terminal/+browser controls render here. Stable across structural edits —
+   * opening a panel to the LEFT must not steal either (it used to: both
+   * followed "first group in tree order"). */
+  primary?: boolean
   items: LayoutTabItem[]
 }
 
@@ -121,11 +165,48 @@ export interface SplitNode {
 
 export type LayoutNode = TabsNode | SplitNode
 
+/** layout:changed payload — trees are per-project */
+export interface LayoutChangedEvent {
+  projectId: string
+  root: LayoutNode
+}
+
 /** Where block.open places a new pane */
-export type PanePosition = 'tab' | 'right' | 'down'
+export type PanePosition = 'tab' | 'right' | 'down' | 'left' | 'up'
 
 /** Built-in block types that block.open can instantiate directly (no bundle) */
-export const BUILTIN_OPENABLE_BLOCKS = ['hello', 'workers'] as const
+export const BUILTIN_OPENABLE_BLOCKS = [
+  'hello',
+  'workers',
+  'projects',
+  'architecture',
+  'files'
+] as const
+
+/** block.open('browser') routes through browser.create instead (needs a session) */
+export const BROWSER_BLOCK = 'browser'
+
+/** One persistent profile shared by all browser blocks (logins survive restarts) */
+export const BROWSER_PARTITION = 'persist:airun9-browser'
+
+/** One fs.list entry; `path` is project-relative with '/' separators */
+export interface FileEntry {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+  /** bytes; null for directories */
+  size: number | null
+}
+
+/** fs.read result; `content` is empty when the file is binary */
+export interface FileReadResult {
+  path: string
+  content: string
+  /** full size on disk, even when truncated */
+  size: number
+  truncated: boolean
+  binary: boolean
+}
 
 /** Manifest of a user/agent-authored block (~/.airun9/blocks/<name>/block.json) */
 export interface BlockManifest {
@@ -140,6 +221,8 @@ export interface BlockInfo {
   manifest: BlockManifest
   /** compile error, if the last build failed */
   error: string | null
+  /** ships with the app (no folder in ~/.airun9/blocks) */
+  builtin?: boolean
 }
 
 /** Pending "grant this block its capabilities" decision */
@@ -151,8 +234,101 @@ export interface BlockGrantRequest {
   capabilities: string[]
 }
 
+/**
+ * Architecture schema: agent-maintained map of the open project's modules,
+ * stored in the repo at .airun9/architecture.json so it is git-versioned and
+ * per-project. Main watches the file; the architecture block renders it.
+ * Loosely validated — unknown fields pass through so agents can extend it.
+ */
+export interface ArchGroup {
+  id: string
+  title: string
+}
+
+export interface ArchModule {
+  id: string
+  title: string
+  /** repo-relative path, lets tooling recompute loc later */
+  path?: string
+  /** ArchGroup id; ungrouped modules land in an implicit "other" column */
+  group?: string
+  loc?: number
+  summary?: string
+}
+
+export interface ArchEdge {
+  from: string
+  to: string
+  label?: string
+}
+
+export interface ArchitectureSchema {
+  version: number
+  updatedAt?: string
+  groups?: ArchGroup[]
+  modules: ArchModule[]
+  edges?: ArchEdge[]
+}
+
+/** What architecture.get returns and architecture:changed carries */
+export interface ArchitectureState {
+  /** project the schema belongs to, null if none open */
+  projectId: string | null
+  /** that project's root path */
+  project: string | null
+  /** null when the file is missing or invalid */
+  schema: ArchitectureSchema | null
+  /** set when the file exists but failed to parse/validate */
+  error: string | null
+}
+
+/** Agent CLIs whose transcripts feed the memory DB */
+export type MemoryAgent = 'claude' | 'gpt' | 'grok'
+
+export type MemoryRole = 'user' | 'assistant' | 'tool'
+
+export interface MemorySessionInfo {
+  /** `<agent>:<native session id>` — unique across agents */
+  id: string
+  agent: MemoryAgent
+  /** the id the agent CLI itself uses for this session */
+  nativeId: string
+  /** working directory the session ran in, null if unknown */
+  cwd: string | null
+  /** source transcript file the messages were ingested from */
+  file: string
+  startedAt: number | null
+  updatedAt: number | null
+  messageCount: number
+}
+
+export interface MemoryMessage {
+  id: number
+  sessionId: string
+  /** position within the session, 0-based */
+  ordinal: number
+  role: MemoryRole
+  content: string
+  /** set on role "tool": which tool was called / produced the result */
+  toolName: string | null
+  ts: number | null
+}
+
+export interface MemorySearchHit {
+  messageId: number
+  sessionId: string
+  agent: MemoryAgent
+  cwd: string | null
+  role: MemoryRole
+  toolName: string | null
+  ts: number | null
+  /** FTS match snippet with the surrounding context */
+  snippet: string
+}
+
 /** Renderer push channels (webContents.send) */
 export const EVENT_CHANNELS = [
+  'project:changed',
   'terminal:created',
   'terminal:data',
   'terminal:exit',
@@ -161,11 +337,16 @@ export const EVENT_CHANNELS = [
   'worker:updated',
   'worker:request',
   'worker:request-resolved',
+  'browser:created',
+  'browser:updated',
+  'browser:closed',
   'layout:changed',
   'blocks:changed',
   'block:updated',
   'block:grant-request',
-  'block:grant-resolved'
+  'block:grant-resolved',
+  'architecture:changed',
+  'memory:updated'
 ] as const
 
 export type EventChannel = (typeof EVENT_CHANNELS)[number]

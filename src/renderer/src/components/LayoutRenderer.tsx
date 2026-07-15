@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
-import { IconPlus, IconPuzzle, IconX } from '@tabler/icons-react'
-import IconAstronaut from './icons/IconAstronaut'
+import { IconFile, IconPlus, IconPuzzle, IconWorld, IconX } from '@tabler/icons-react'
+import IconOrbit from './icons/IconOrbit'
 import type { LayoutNode, LayoutTabItem, SplitNode, TabsNode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
@@ -22,6 +22,22 @@ function TabLabel({ item }: { item: LayoutTabItem }): React.JSX.Element {
   const terminals = useWorkspaceStore((s) => s.terminals)
   const workers = useWorkspaceStore((s) => s.workers)
   const blocks = useWorkspaceStore((s) => s.blocks)
+  const browsers = useWorkspaceStore((s) => s.browsers)
+
+  if (item.block === 'browser') {
+    const browser = browsers.find((b) => b.id === item.config.browserId)
+    const label = browser?.title || hostOf(browser?.url) || 'browser'
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        {browser?.favicon ? (
+          <img src={browser.favicon} alt="" className="size-3.5 shrink-0 rounded-sm" />
+        ) : (
+          <IconWorld className="size-3.5 shrink-0 text-neutral-500" stroke={1.75} />
+        )}
+        <span className="truncate text-[12px]">{label}</span>
+      </span>
+    )
+  }
 
   if (item.block === 'terminal') {
     const terminal = terminals.find((t) => t.id === item.config.terminalId)
@@ -29,9 +45,10 @@ function TabLabel({ item }: { item: LayoutTabItem }): React.JSX.Element {
     return (
       <span className="flex min-w-0 items-center gap-1.5">
         {terminal?.workerId && (
-          <IconAstronaut
+          <IconOrbit
             className={`size-3.5 shrink-0 ${WORKER_STATUS_COLOR[worker?.status ?? 'exited']}`}
             stroke={1.75}
+            spinning={worker?.status === 'running'}
           />
         )}
         <span
@@ -41,6 +58,16 @@ function TabLabel({ item }: { item: LayoutTabItem }): React.JSX.Element {
         >
           {terminal?.title ?? 'terminal'}
         </span>
+      </span>
+    )
+  }
+
+  if (item.block === 'file') {
+    const path = String(item.config.path ?? '')
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        <IconFile className="size-3.5 shrink-0 text-neutral-500" stroke={1.75} />
+        <span className="truncate text-[12px]">{path.split('/').pop() || 'file'}</span>
       </span>
     )
   }
@@ -55,15 +82,27 @@ function TabLabel({ item }: { item: LayoutTabItem }): React.JSX.Element {
   )
 }
 
+function hostOf(url: string | undefined): string {
+  if (!url) return ''
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 function closeItem(item: LayoutTabItem): void {
   if (item.block === 'terminal') {
     void api.closeTerminal(String(item.config.terminalId))
+  } else if (item.block === 'browser') {
+    // closing the session removes the layout item via the manager's wiring
+    void api.closeBrowser(String(item.config.browserId))
   } else {
     void api.removeLayoutItem(item.id)
   }
 }
 
-function TabGroup({ node, first }: { node: TabsNode; first: boolean }): React.JSX.Element {
+function TabGroup({ node }: { node: TabsNode }): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-white/[0.06] px-2">
@@ -90,15 +129,27 @@ function TabGroup({ node, first }: { node: TabsNode; first: boolean }): React.JS
             </button>
           </div>
         ))}
-        {first && (
-          <button
-            type="button"
-            className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
-            onClick={() => void api.createTerminal()}
-            title="New terminal"
-          >
-            <IconPlus className="size-4" stroke={1.75} />
-          </button>
+        {/* the primary group keeps the new-pane controls — a stable flag,
+            not tree position, so panels opened to the left can't steal them */}
+        {node.primary && (
+          <>
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
+              onClick={() => void api.createTerminal()}
+              title="New terminal"
+            >
+              <IconPlus className="size-4" stroke={1.75} />
+            </button>
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
+              onClick={() => void api.createBrowser()}
+              title="New browser"
+            >
+              <IconWorld className="size-4" stroke={1.75} />
+            </button>
+          </>
         )}
       </div>
       <div className="relative min-h-0 flex-1">
@@ -117,7 +168,7 @@ function TabGroup({ node, first }: { node: TabsNode; first: boolean }): React.JS
   )
 }
 
-function SplitView({ node, first }: { node: SplitNode; first: boolean }): React.JSX.Element {
+function SplitView({ node }: { node: SplitNode }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   // drag state is only honored while it belongs to the current server ratios
   // (a layout:changed push delivers a fresh array, invalidating it by identity)
@@ -129,6 +180,9 @@ function SplitView({ node, first }: { node: SplitNode; first: boolean }): React.
     const container = containerRef.current
     if (!container) return
     event.preventDefault()
+    // capture the pointer so move/up still reach us over iframe panes
+    // (terminals, blocks), which otherwise swallow pointer events
+    event.currentTarget.setPointerCapture(event.pointerId)
     const total = isRow ? container.clientWidth : container.clientHeight
     const startPos = isRow ? event.clientX : event.clientY
     const startRatios = [...ratios]
@@ -149,10 +203,12 @@ function SplitView({ node, first }: { node: SplitNode; first: boolean }): React.
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
       void api.setLayoutRatios(node.id, current)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   return (
@@ -163,7 +219,7 @@ function SplitView({ node, first }: { node: SplitNode; first: boolean }): React.
       {node.children.map((child, i) => (
         <div key={childKey(child)} className="contents">
           <div style={{ flex: `${ratios[i]} 1 0%` }} className="min-h-0 min-w-0 overflow-hidden">
-            <LayoutRenderer node={child} first={first && i === 0} />
+            <LayoutRenderer node={child} />
           </div>
           {i < node.children.length - 1 && (
             <div
@@ -183,9 +239,9 @@ function childKey(node: LayoutNode): string {
   return node.id
 }
 
-function LayoutRenderer({ node, first }: { node: LayoutNode; first: boolean }): React.JSX.Element {
-  if (node.type === 'tabs') return <TabGroup node={node} first={first} />
-  return <SplitView node={node} first={first} />
+function LayoutRenderer({ node }: { node: LayoutNode }): React.JSX.Element {
+  if (node.type === 'tabs') return <TabGroup node={node} />
+  return <SplitView node={node} />
 }
 
 export default LayoutRenderer

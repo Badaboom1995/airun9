@@ -79,7 +79,12 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
             })
             return
           }
-          void window.api.rpc(message.method, message.params).then((response) => {
+          // storage is namespaced by block: the host stamps the name so a
+          // block can never read or write another block's store
+          const params = message.method.startsWith('storage.')
+            ? { ...(message.params as Record<string, unknown> | undefined), block: name }
+            : message.params
+          void window.api.rpc(message.method, params).then((response) => {
             port?.postMessage({
               type: 'rpc:result',
               id: message.id,
@@ -106,7 +111,7 @@ function CustomBlockHost({ config }: BlockPaneProps<{ name: string }>): React.JS
       subscriptions.forEach((off) => off())
       port?.close()
     }
-  }, [src, granted])
+  }, [src, granted, name])
 
   if (error) {
     return (

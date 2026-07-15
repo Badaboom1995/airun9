@@ -4,6 +4,11 @@ import TerminalBlock from './TerminalBlock'
 import CustomBlockHost from './CustomBlockHost'
 import HelloBlock from './HelloBlock'
 import WorkersBlock from './WorkersBlock'
+import ProjectsBlock from './ProjectsBlock'
+import ArchitectureBlock from './ArchitectureBlock'
+import FilesBlock from './FilesBlock'
+import FileBlock from './FileBlock'
+import BrowserBlock from './BrowserBlock'
 
 /**
  * Block registry (build-plan step 1): a block type is a component plus a
@@ -32,9 +37,29 @@ export const blockRegistry: Record<string, BlockDefinition> = {
     configSchema: z.object({}).passthrough(),
     component: WorkersBlock as ComponentType<BlockPaneProps>
   },
+  projects: {
+    configSchema: z.object({}).passthrough(),
+    component: ProjectsBlock as ComponentType<BlockPaneProps>
+  },
+  architecture: {
+    configSchema: z.object({}).passthrough(),
+    component: ArchitectureBlock as ComponentType<BlockPaneProps>
+  },
+  files: {
+    configSchema: z.object({}).passthrough(),
+    component: FilesBlock as ComponentType<BlockPaneProps>
+  },
+  file: {
+    configSchema: z.object({ path: z.string() }),
+    component: FileBlock as ComponentType<BlockPaneProps>
+  },
   terminal: {
     configSchema: z.object({ terminalId: z.string() }),
     component: TerminalBlock as ComponentType<BlockPaneProps>
+  },
+  browser: {
+    configSchema: z.object({ browserId: z.string() }),
+    component: BrowserBlock as ComponentType<BlockPaneProps>
   },
   custom: {
     configSchema: z.object({ name: z.string() }),

@@ -64,6 +64,27 @@ function TerminalView({ id, active }: TerminalViewProps): React.JSX.Element {
     }
     termRef.current = term
 
+    // Shift+Enter would otherwise send a plain \r (same as Enter). Send
+    // ESC+CR instead, which TUIs like Claude Code treat as "insert newline"
+    // (the same sequence /terminal-setup configures in VS Code).
+    // Swallow every event for the keystroke (keydown AND keypress — xterm
+    // would emit its own \r on the keypress otherwise) but write only once.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.key === 'Enter' && event.shiftKey) {
+        if (event.type === 'keydown') void api.writeTerminal(id, '\x1b\r')
+        return false
+      }
+      // Cmd+Left/Right → start/end of line, as everywhere else on macOS.
+      // Ctrl+A / Ctrl+E are what shells and TUI line editors understand.
+      if (event.metaKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        if (event.type === 'keydown') {
+          void api.writeTerminal(id, event.key === 'ArrowLeft' ? '\x01' : '\x05')
+        }
+        return false
+      }
+      return true
+    })
+
     // Fit only when the container is actually laid out: fitting a hidden
     // tab (display: none, 0×0) computes a degenerate size and resizes the
     // PTY to a few columns, garbling everything the TUI draws before the
