@@ -91,7 +91,6 @@ function Workspace(): React.JSX.Element {
         className="flex h-10 shrink-0 items-center gap-3 border-b border-white/[0.06] pr-3 pl-20"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <span className="font-michroma text-[11px] tracking-[0.25em] text-neutral-400">AIRUN9</span>
         <ProjectsRail />
       </div>
 

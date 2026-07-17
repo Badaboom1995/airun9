@@ -29,7 +29,11 @@ function BrowserBlock({ config }: BlockPaneProps<{ browserId: string }>): React.
 
   // report where the page should render; anything that can move or hide
   // this pane funnels through here (splits resize it, tab/project switches
-  // display:none an ancestor, which ResizeObserver reports as 0×0)
+  // display:none an ancestor, which ResizeObserver reports as 0×0).
+  // hasPane matters: on first mount the browsers list is usually still
+  // being fetched, so the placeholder doesn't exist yet — the effect must
+  // re-arm when it appears or the webview stays hidden forever
+  const hasPane = Boolean(info)
   useLayoutEffect(() => {
     const element = placeholderRef.current
     if (!element) return
@@ -63,7 +67,7 @@ function BrowserBlock({ config }: BlockPaneProps<{ browserId: string }>): React.
       // its geometry — the session may come back on the next switch
       hide(browserId)
     }
-  }, [browserId])
+  }, [browserId, hasPane])
 
   if (!info) {
     return (
