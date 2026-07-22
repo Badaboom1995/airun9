@@ -263,6 +263,8 @@ app.whenReady().then(async () => {
   // sessions from the previous run come back through this connection
   try {
     await terminals.connect()
+    // now that live sessions are known, previous-run workers come back too
+    workers.rehydrate()
   } catch (error) {
     console.error('[ptyd] daemon unavailable, terminals will not work:', error)
   }

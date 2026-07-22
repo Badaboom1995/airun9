@@ -12,6 +12,7 @@ import type {
 import type { TerminalClient } from './terminals'
 import type { WorktreeManager } from './worktrees'
 import { ensureClaudeSettings, type ClaudeSettingsPaths } from './claude-settings'
+import { loadWorkers, saveWorkers } from './worker-store'
 
 /** ADR-0008: worker.spawn ships with a concurrency cap (on actively working) */
 const MAX_RUNNING_WORKERS = 4
@@ -77,8 +78,37 @@ export class WorkerManager extends EventEmitter {
         worker.status = 'exited'
         worker.exitCode = exitCode
         this.emit('updated', worker)
+        this.persist()
       }
     })
+  }
+
+  /**
+   * Load the previous run's workers and reconcile with the daemon's live
+   * sessions (docs/plans/pty-daemon.md phase 3). Call after the terminal
+   * client has connected and seeded. Terminal alive → worker returns with
+   * its persisted status (a stop hook that fired while the IDE was closed
+   * is lost — accepted v1 gap; the next lifecycle event corrects it).
+   * Terminal exited → worker exited. Terminal gone (reboot, daemon crash,
+   * closed tab) → record dropped, which is also what prunes the store.
+   */
+  rehydrate(): void {
+    const live = new Map(this.terminals.list().map((t) => [t.id, t]))
+    for (const worker of loadWorkers()) {
+      if (this.workers.has(worker.id)) continue
+      const terminal = live.get(worker.terminalId)
+      if (!terminal) continue
+      if (terminal.status !== 'running' && worker.status !== 'exited') {
+        worker.status = 'exited'
+        worker.exitCode = terminal.exitCode
+      }
+      this.workers.set(worker.id, worker)
+    }
+    this.persist()
+  }
+
+  private persist(): void {
+    saveWorkers(this.workers.values())
   }
 
   async createScouts(options: ScoutOptions, project: ProjectInfo): Promise<WorkerInfo[]> {
@@ -176,6 +206,7 @@ export class WorkerManager extends EventEmitter {
     if (event === 'stop') worker.status = 'done'
     else if (event === 'prompt-submit') worker.status = 'running'
     this.emit('updated', worker)
+    this.persist()
   }
 
   /**
@@ -209,6 +240,7 @@ export class WorkerManager extends EventEmitter {
     this.terminals.write(worker.terminalId, text.replace(/\r?\n/g, ' ') + '\r')
     worker.status = 'running'
     this.emit('updated', worker)
+    this.persist()
     return worker
   }
 
@@ -291,6 +323,7 @@ export class WorkerManager extends EventEmitter {
       worker.status = 'exited'
       this.emit('updated', worker)
     }
+    this.persist()
     return worker
   }
 
@@ -347,6 +380,7 @@ export class WorkerManager extends EventEmitter {
     }
     this.workers.set(id, worker)
     this.emit('created', worker)
+    this.persist()
     return worker
   }
 }
