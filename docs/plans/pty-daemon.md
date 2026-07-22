@@ -1,5 +1,8 @@
 # PTY Daemon — implementation plan
 
+> Status: phases 1–6 implemented (2026-07-22). Remaining: the "Later"
+> section below.
+
 Goal: terminals and agent sessions survive IDE quit/reload (ADR-0005's daemon
 boundary). Modeled on Superset's `@superset/pty-daemon` (see
 docs/research/superset.md), scoped to AIRUN9 v1.

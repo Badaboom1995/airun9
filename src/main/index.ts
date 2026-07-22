@@ -16,6 +16,8 @@ import { ArchitectureManager } from './architecture'
 import { MemoryManager } from './memory'
 import { startSocketServer, stopSocketServer, SOCKET_PATH } from './socket'
 import { zshBootstrapEnv } from './shell-env'
+import { startTerminalReaper } from './reaper'
+import { initTray } from './tray'
 
 // Block documents load from their own scheme so they carry their own CSP
 // instead of inheriting the app page's (srcdoc iframes inherit the embedder's
@@ -268,6 +270,7 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('[ptyd] daemon unavailable, terminals will not work:', error)
   }
+  startTerminalReaper({ terminals, workers, projects })
 
   nativeTheme.themeSource = 'dark'
 
@@ -305,6 +308,27 @@ app.whenReady().then(async () => {
 
   createWindow()
 
+  // the tray is the handle on agents that outlive the window (plan phase 5)
+  initTray({
+    iconPath: icon,
+    workers,
+    onOpen: () => {
+      const [window] = BrowserWindow.getAllWindows()
+      if (window) {
+        window.show()
+        window.focus()
+      } else createWindow()
+    },
+    onQuitKeep: () => {
+      quitMode = 'keep'
+      app.quit()
+    },
+    onQuitStop: () => {
+      quitMode = 'stop'
+      app.quit()
+    }
+  })
+
   // watchers + backfill of existing agent transcripts, after the window is up
   memory.start()
 
@@ -315,11 +339,39 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => {
-  // Prod: detach — the daemon keeps terminals and agents alive for the next
-  // launch. Dev: stop everything, or hot-reloads would leak stale-code
-  // daemons (AIRUN9_PTYD_PERSIST=1 opts dev into the prod behavior).
-  if (is.dev && process.env.AIRUN9_PTYD_PERSIST !== '1') terminals.shutdownDaemon()
+/** persist mode: the daemon outlives the IDE. Dev opts out so hot-reloads
+ * can't leak stale-code daemons (AIRUN9_PTYD_PERSIST=1 re-opts in). */
+const persistMode = !is.dev || process.env.AIRUN9_PTYD_PERSIST === '1'
+
+/** 'ask' → dialog when agents are running; tray items pre-decide it */
+let quitMode: 'ask' | 'keep' | 'stop' = 'ask'
+
+app.on('before-quit', (event) => {
+  if (quitMode === 'ask' && persistMode) {
+    const running = workers.list().filter((w) => w.status === 'running')
+    if (running.length > 0) {
+      event.preventDefault()
+      void dialog
+        .showMessageBox({
+          type: 'question',
+          buttons: ['Keep running in background', 'Stop them', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+          message: `${running.length} agent${running.length === 1 ? ' is' : 's are'} still working`,
+          detail:
+            'Keep them running and pick up where you left off on next launch, or stop them now.'
+        })
+        .then(({ response }) => {
+          if (response === 2) return
+          quitMode = response === 0 ? 'keep' : 'stop'
+          app.quit()
+        })
+      return
+    }
+  }
+  // Keep: detach — the daemon holds terminals and agents for the next
+  // launch. Stop (or non-persist dev): daemon and sessions go down too.
+  if (!persistMode || quitMode === 'stop') terminals.shutdownDaemon()
   else terminals.detach()
   blocks.dispose()
   layout.dispose()
