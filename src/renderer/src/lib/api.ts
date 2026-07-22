@@ -18,7 +18,11 @@ import type {
   TerminalSnapshot,
   WorkerInfo,
   WorkerRequest,
-  WorkerRequestDecision
+  WorkerRequestDecision,
+  WorktreeCreateResult,
+  WorktreeInfo,
+  WorktreeRequest,
+  WorktreeRequestDecision
 } from '../../../shared/types'
 
 async function rpc<T>(method: string, params?: unknown): Promise<T> {
@@ -37,7 +41,7 @@ export const api = {
   listFiles: (path = '.') => rpc<FileEntry[]>('fs.list', { path }),
   readFile: (path: string) => rpc<FileReadResult>('fs.read', { path }),
 
-  createTerminal: (options?: { cwd?: string; title?: string }) =>
+  createTerminal: (options?: { cwd?: string; title?: string; projectId?: string }) =>
     rpc<TerminalInfo>('terminal.create', options ?? {}),
   // the renderer keeps every project's sessions in the store (badges,
   // background tab decoration), so it always asks for the full set
@@ -67,6 +71,23 @@ export const api = {
   pendingWorkerRequests: () => rpc<WorkerRequest[]>('worker.pendingRequests'),
   resolveWorkerRequest: (decision: WorkerRequestDecision) =>
     rpc<void>('worker.resolveRequest', decision),
+
+  listWorktrees: (projectId?: string) => rpc<WorktreeInfo[]>('worktree.list', { projectId }),
+  createWorktree: (options: {
+    name: string
+    from?: string
+    bootstrapCmd?: string
+    projectId?: string
+  }) => rpc<WorktreeCreateResult>('worktree.create', options),
+  activateWorktree: (id: string, projectId?: string) =>
+    rpc<ProjectInfo>('worktree.activate', { id, projectId }),
+  requestRemoveWorktree: (id: string, projectId?: string) =>
+    rpc<{ removed: boolean; branchDeleted: boolean }>('worktree.requestRemove', { id, projectId }),
+  pendingWorktreeRequests: () => rpc<WorktreeRequest[]>('worktree.pendingRequests'),
+  resolveWorktreeRequest: (decision: WorktreeRequestDecision) =>
+    rpc<void>('worktree.resolveRequest', decision),
+  worktreeBootstrapCmd: (projectId?: string) =>
+    rpc<{ cmd: string | null }>('worktree.bootstrapCmd', { projectId }),
 
   getLayout: () => rpc<LayoutNode>('layout.get'),
   setLayoutActive: (tabsId: string, itemId: string) =>
@@ -122,6 +143,12 @@ export const events = {
     window.api.on('worker:request', cb as (payload: unknown) => void),
   onWorkerRequestResolved: (cb: (event: { requestId: string; approved: boolean }) => void) =>
     window.api.on('worker:request-resolved', cb as (payload: unknown) => void),
+  onWorktreeRequest: (cb: (request: WorktreeRequest) => void) =>
+    window.api.on('worktree:request', cb as (payload: unknown) => void),
+  onWorktreeRequestResolved: (cb: (event: { requestId: string; approved: boolean }) => void) =>
+    window.api.on('worktree:request-resolved', cb as (payload: unknown) => void),
+  onWorktreeChanged: (cb: (event: { projectId: string }) => void) =>
+    window.api.on('worktree:changed', cb as (payload: unknown) => void),
   onLayoutChanged: (cb: (event: LayoutChangedEvent) => void) =>
     window.api.on('layout:changed', cb as (payload: unknown) => void),
   onBlocksChanged: (cb: (blocks: BlockInfo[]) => void) =>

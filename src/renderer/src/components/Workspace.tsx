@@ -20,6 +20,9 @@ function Workspace(): React.JSX.Element {
     setWorkerRequests,
     upsertWorkerRequest,
     removeWorkerRequest,
+    setWorktreeRequests,
+    upsertWorktreeRequest,
+    removeWorktreeRequest,
     setLayout,
     setBlocks,
     setBrowsers,
@@ -37,6 +40,8 @@ function Workspace(): React.JSX.Element {
       events.onWorkerUpdated(upsertWorker),
       events.onWorkerRequest(upsertWorkerRequest),
       events.onWorkerRequestResolved(({ requestId }) => removeWorkerRequest(requestId)),
+      events.onWorktreeRequest(upsertWorktreeRequest),
+      events.onWorktreeRequestResolved(({ requestId }) => removeWorktreeRequest(requestId)),
       events.onBrowserCreated(upsertBrowser),
       events.onBrowserUpdated(upsertBrowser),
       events.onBrowserClosed(({ id }) => removeBrowser(id)),
@@ -50,6 +55,7 @@ function Workspace(): React.JSX.Element {
     void api.listBrowsers().then(setBrowsers)
     void api.listWorkers().then(setWorkers)
     void api.pendingWorkerRequests().then(setWorkerRequests)
+    void api.pendingWorktreeRequests().then(setWorktreeRequests)
     void api.listBlocks().then(setBlocks)
     void api.listTerminals().then(setTerminals)
 
@@ -59,16 +65,19 @@ function Workspace(): React.JSX.Element {
     removeBrowser,
     removeTerminal,
     removeWorkerRequest,
+    removeWorktreeRequest,
     setBlocks,
     setBrowsers,
     setLayout,
     setTerminals,
     setWorkerRequests,
     setWorkers,
+    setWorktreeRequests,
     upsertBrowser,
     upsertTerminal,
     upsertWorker,
-    upsertWorkerRequest
+    upsertWorkerRequest,
+    upsertWorktreeRequest
   ])
 
   // the visible tree follows the active project (main adopts panes on

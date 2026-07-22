@@ -4,6 +4,7 @@ import IconOrbit from './icons/IconOrbit'
 import type { LayoutNode, LayoutTabItem, SplitNode, TabsNode } from '../../../shared/types'
 import { api } from '../lib/api'
 import { useWorkspaceStore } from '../stores/workspace'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import PaneHost from './PaneHost'
 
 /**
@@ -102,68 +103,132 @@ function closeItem(item: LayoutTabItem): void {
   }
 }
 
+function paneMenuItems(item: LayoutTabItem): ContextMenuItem[] {
+  return [
+    {
+      label: 'New terminal',
+      icon: <IconPlus className="size-3.5" stroke={1.75} />,
+      onClick: () => void api.createTerminal()
+    },
+    {
+      label: 'New browser',
+      icon: <IconWorld className="size-3.5" stroke={1.75} />,
+      onClick: () => void api.createBrowser()
+    },
+    {
+      label: 'Close',
+      icon: <IconX className="size-3.5" stroke={1.75} />,
+      danger: true,
+      onClick: () => closeItem(item)
+    }
+  ]
+}
+
 function TabGroup({ node }: { node: TabsNode }): React.JSX.Element {
+  const [menu, setMenu] = useState<{ x: number; y: number; item: LayoutTabItem } | null>(null)
+  // a lone pane needs no chrome — its actions live in the context menu;
+  // the strip only exists to switch between multiple tabs
+  const showStrip = node.items.length > 1
+
+  const openMenu = (item: LayoutTabItem) => (event: React.MouseEvent) => {
+    event.preventDefault()
+    setMenu({ x: event.clientX, y: event.clientY, item })
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-white/[0.06] px-2">
+      {showStrip && (
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-white/[0.06] px-2">
+          {node.items.map((item) => (
+            <div
+              key={item.id}
+              className={`group flex h-7 max-w-48 cursor-pointer items-center gap-1 rounded-md px-2.5 transition-colors ${
+                item.id === node.active
+                  ? 'bg-white/[0.08] text-neutral-100'
+                  : 'text-neutral-400 hover:bg-white/[0.04]'
+              }`}
+              onClick={() => void api.setLayoutActive(node.id, item.id)}
+              onContextMenu={openMenu(item)}
+            >
+              <TabLabel item={item} />
+              <button
+                type="button"
+                className="ml-0.5 rounded p-0.5 text-neutral-600 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/[0.08] hover:text-neutral-300"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  closeItem(item)
+                }}
+              >
+                <IconX className="size-3" stroke={2} />
+              </button>
+            </div>
+          ))}
+          {/* the primary group keeps the new-pane controls — a stable flag,
+              not tree position, so panels opened to the left can't steal them */}
+          {node.primary && (
+            <>
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
+                onClick={() => void api.createTerminal()}
+                title="New terminal"
+              >
+                <IconPlus className="size-4" stroke={1.75} />
+              </button>
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
+                onClick={() => void api.createBrowser()}
+                title="New browser"
+              >
+                <IconWorld className="size-4" stroke={1.75} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1">
+        {node.items.length === 0 && (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-[13px] text-neutral-600">
+            <span>No panes</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[12px] text-neutral-300 transition-colors hover:bg-white/[0.08]"
+                onClick={() => void api.createTerminal()}
+              >
+                <IconPlus className="size-3.5" stroke={1.75} />
+                New terminal
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[12px] text-neutral-300 transition-colors hover:bg-white/[0.08]"
+                onClick={() => void api.createBrowser()}
+              >
+                <IconWorld className="size-3.5" stroke={1.75} />
+                New browser
+              </button>
+            </div>
+          </div>
+        )}
         {node.items.map((item) => (
           <div
             key={item.id}
-            className={`group flex h-7 max-w-48 cursor-pointer items-center gap-1 rounded-md px-2.5 transition-colors ${
-              item.id === node.active
-                ? 'bg-white/[0.08] text-neutral-100'
-                : 'text-neutral-400 hover:bg-white/[0.04]'
-            }`}
-            onClick={() => void api.setLayoutActive(node.id, item.id)}
+            className={item.id === node.active ? 'absolute inset-0' : 'hidden'}
+            onContextMenu={openMenu(item)}
           >
-            <TabLabel item={item} />
-            <button
-              type="button"
-              className="ml-0.5 rounded p-0.5 text-neutral-600 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/[0.08] hover:text-neutral-300"
-              onClick={(event) => {
-                event.stopPropagation()
-                closeItem(item)
-              }}
-            >
-              <IconX className="size-3" stroke={2} />
-            </button>
-          </div>
-        ))}
-        {/* the primary group keeps the new-pane controls — a stable flag,
-            not tree position, so panels opened to the left can't steal them */}
-        {node.primary && (
-          <>
-            <button
-              type="button"
-              className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
-              onClick={() => void api.createTerminal()}
-              title="New terminal"
-            >
-              <IconPlus className="size-4" stroke={1.75} />
-            </button>
-            <button
-              type="button"
-              className="flex size-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white/[0.06] hover:text-neutral-200"
-              onClick={() => void api.createBrowser()}
-              title="New browser"
-            >
-              <IconWorld className="size-4" stroke={1.75} />
-            </button>
-          </>
-        )}
-      </div>
-      <div className="relative min-h-0 flex-1">
-        {node.items.length === 0 && (
-          <div className="flex h-full items-center justify-center text-[13px] text-neutral-600">
-            No panes — create a terminal with the + button
-          </div>
-        )}
-        {node.items.map((item) => (
-          <div key={item.id} className={item.id === node.active ? 'absolute inset-0' : 'hidden'}>
             <PaneHost item={item} active={item.id === node.active} />
           </div>
         ))}
       </div>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={paneMenuItems(menu.item)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
 }

@@ -1,9 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { readFileSync, mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { nanoid } from 'nanoid'
 import type {
   ProjectInfo,
@@ -14,13 +10,11 @@ import type {
   WorkerRequestDecision
 } from '../shared/types'
 import type { TerminalManager } from './terminals'
+import type { WorktreeManager } from './worktrees'
 import { ensureClaudeSettings, type ClaudeSettingsPaths } from './claude-settings'
-
-const execFileAsync = promisify(execFile)
 
 /** ADR-0008: worker.spawn ships with a concurrency cap (on actively working) */
 const MAX_RUNNING_WORKERS = 4
-const WORKTREES_DIR = join(homedir(), '.airun9', 'worktrees')
 
 const MODE_FLAGS: Record<WorkerMode, string> = {
   plan: '--permission-mode plan',
@@ -72,6 +66,7 @@ export class WorkerManager extends EventEmitter {
 
   constructor(
     private terminals: TerminalManager,
+    private worktrees: WorktreeManager,
     binDir: string
   ) {
     super()
@@ -143,12 +138,17 @@ export class WorkerManager extends EventEmitter {
 
     const { request, project } = pending
     try {
+      // spawn-into-existing shares one worktree between all N workers
+      // (ADR-0011 allows it — the user chose it on the card)
+      const existingPath = decision.worktreeId
+        ? (await this.worktrees.find(project, decision.worktreeId)).path
+        : null
       const workers = await Promise.all(
         Array.from({ length: request.count }, async (_, i) => {
           const name = indexedName(request.name ?? 'worker', request.count, i)
           const cwd =
             decision.location === 'worktree'
-              ? await this.createWorktree(project, name)
+              ? (existingPath ?? (await this.worktrees.createForWorker(project, name)))
               : project.path
           return this.spawn({
             prompt: request.prompt,
@@ -348,15 +348,6 @@ export class WorkerManager extends EventEmitter {
     this.workers.set(id, worker)
     this.emit('created', worker)
     return worker
-  }
-
-  private async createWorktree(project: ProjectInfo, workerName: string): Promise<string> {
-    mkdirSync(WORKTREES_DIR, { recursive: true })
-    const slug = `${project.name}-${workerName}-${nanoid(6)}`.replace(/[^\w.-]/g, '-')
-    const dir = join(WORKTREES_DIR, slug)
-    const branch = `airun9/${slug}`
-    await execFileAsync('git', ['-C', project.path, 'worktree', 'add', dir, '-b', branch])
-    return dir
   }
 }
 

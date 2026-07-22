@@ -6,6 +6,7 @@ import type { ProjectInfo } from '../shared/types'
 import { TerminalManager } from './terminals'
 import { BrowserManager } from './browser'
 import { WorkerManager } from './workers'
+import { WorktreeManager } from './worktrees'
 import { LayoutManager } from './layout'
 import { ProjectManager } from './projects'
 import { BlocksManager, BLOCK_CSP, BUILTIN_BLOCK_INFOS } from './blocks'
@@ -37,9 +38,13 @@ const terminals = new TerminalManager(() => ({
   PATH: `${cliBinDir}:${process.env.PATH ?? ''}`,
   ...zshBootstrapEnv(cliBinDir)
 }))
-const workers = new WorkerManager(terminals, cliBinDir)
+const storage = new BlockStorage()
 const layout = new LayoutManager()
 const projects = new ProjectManager()
+const worktrees = new WorktreeManager(terminals, storage, projects)
+const workers = new WorkerManager(terminals, worktrees, cliBinDir)
+// circular by nature: workers create worktrees, worktree removal stops workers
+worktrees.bindWorkers(workers)
 const blocks = new BlocksManager(
   is.dev
     ? join(app.getAppPath(), 'resources', 'block-sdk', 'index.ts')
@@ -134,6 +139,7 @@ projects.on('activated', (project: ProjectInfo) => {
 })
 projects.on('closed', (project: ProjectInfo) => {
   workers.closeProject(project.id)
+  worktrees.closeProject(project.id)
   for (const terminal of terminals.list(project.id)) terminals.close(terminal.id)
   for (const browser of browsers.list(project.id)) browsers.close(browser.id)
   architecture.unwatch(project.id)
@@ -150,9 +156,10 @@ const api = buildApi({
   terminals,
   browsers,
   workers,
+  worktrees,
   layout,
   blocks,
-  storage: new BlockStorage(),
+  storage,
   architecture,
   memory
 })
@@ -177,6 +184,9 @@ workers.on('created', (worker) => broadcast('worker:created', worker))
 workers.on('updated', (worker) => broadcast('worker:updated', worker))
 workers.on('request', (request) => broadcast('worker:request', request))
 workers.on('request-resolved', (resolution) => broadcast('worker:request-resolved', resolution))
+worktrees.on('request', (request) => broadcast('worktree:request', request))
+worktrees.on('request-resolved', (resolution) => broadcast('worktree:request-resolved', resolution))
+worktrees.on('changed', (event) => broadcast('worktree:changed', event))
 layout.on('changed', (root) => broadcast('layout:changed', root))
 blocks.on('changed', (list) => broadcast('blocks:changed', [...BUILTIN_BLOCK_INFOS, ...list]))
 blocks.on('updated', (event) => broadcast('block:updated', event))
@@ -187,7 +197,7 @@ memory.on('updated', (event) => broadcast('memory:updated', event))
 
 ipcMain.handle('rpc', async (_event, method: string, params: unknown) => {
   try {
-    return { result: await dispatch(api, method, params) }
+    return { result: await dispatch(api, method, params, { door: 'ipc' }) }
   } catch (error) {
     return { error: { message: error instanceof Error ? error.message : String(error) } }
   }

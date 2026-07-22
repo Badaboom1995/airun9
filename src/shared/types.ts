@@ -67,6 +67,91 @@ export interface WorkerRequestDecision {
   approved: boolean
   mode: Exclude<WorkerMode, 'plan'>
   location: WorkerLocation
+  /** Spawn into this EXISTING worktree instead of creating a fresh one
+   * (only meaningful with location 'worktree') */
+  worktreeId?: string
+}
+
+/**
+ * A git worktree of a project (ADR-0011): a first-class resource. Git is the
+ * source of truth — this shape is a parsed `git worktree list` entry, never a
+ * stored record. The main checkout is the first, unremovable entry.
+ */
+export interface WorktreeInfo {
+  /** Deterministic hash of the path (like project ids) — stable across scans */
+  id: string
+  projectId: string
+  /** Directory basename; the main checkout reports the project name */
+  name: string
+  path: string
+  /** Checked-out branch, null when detached */
+  branch: string | null
+  /** Short HEAD sha */
+  head: string
+  /** The repo's main checkout (the project folder itself) */
+  isMain: boolean
+  /** Lives outside ~/.airun9/worktrees (made by hand with plain git) */
+  external: boolean
+}
+
+/** Pending "create worktree(s)" approval (agents only; the UI dialog IS the
+ * user's consent and creates directly) */
+export interface WorktreeCreateRequest {
+  kind: 'create'
+  id: string
+  projectId: string
+  /** Final names — one worktree each */
+  names: string[]
+  /** Branches to create, airun9/<name> */
+  branches: string[]
+  /** Base commit resolved at request time — what the approval card shows is
+   * exactly what gets used, even if HEAD moves before the user decides */
+  base: string
+  /** Human label for the card: "main @ 40cc61a" */
+  baseLabel: string
+  reason: string | null
+  createdAt: number
+}
+
+/** Pending "remove worktree" approval, with the blast radius computed at
+ * request time (ADR-0004: destructive ops always confirm) */
+export interface WorktreeRemoveRequest {
+  kind: 'remove'
+  id: string
+  projectId: string
+  worktreeId: string
+  name: string
+  path: string
+  branch: string | null
+  external: boolean
+  /** Uncommitted changes that die with the tree */
+  dirtyFiles: number
+  /** Commits on the branch not reachable from the main checkout's HEAD —
+   * they survive unless the user also deletes the branch */
+  aheadCommits: number
+  /** Live workers inside — approval stops them */
+  workerCount: number
+  /** Live non-worker terminals inside — approval closes them */
+  terminalCount: number
+  reason: string | null
+  createdAt: number
+}
+
+export type WorktreeRequest = WorktreeCreateRequest | WorktreeRemoveRequest
+
+export interface WorktreeRequestDecision {
+  requestId: string
+  approved: boolean
+  /** Remove only: also delete the local branch (unmerged commits die too) */
+  deleteBranch?: boolean
+}
+
+/** What a resolved create request returns to the requesting agent */
+export interface WorktreeCreateResult {
+  worktrees: WorktreeInfo[]
+  /** The project's remembered bootstrap command — a suggestion, not a
+   * promise: the agent decides what to actually run in the new tree */
+  bootstrapCmd: string | null
 }
 
 /**
@@ -337,6 +422,9 @@ export const EVENT_CHANNELS = [
   'worker:updated',
   'worker:request',
   'worker:request-resolved',
+  'worktree:request',
+  'worktree:request-resolved',
+  'worktree:changed',
   'browser:created',
   'browser:updated',
   'browser:closed',

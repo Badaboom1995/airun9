@@ -13,6 +13,7 @@ import {
 import type { BrowserManager } from './browser'
 import type { TerminalManager } from './terminals'
 import type { WorkerManager } from './workers'
+import type { WorktreeManager } from './worktrees'
 import type { LayoutManager } from './layout'
 import type { ProjectManager } from './projects'
 import { BUILTIN_BLOCK_INFOS, type BlocksManager } from './blocks'
@@ -37,6 +38,7 @@ export interface ApiContext {
   terminals: TerminalManager
   browsers: BrowserManager
   workers: WorkerManager
+  worktrees: WorktreeManager
   layout: LayoutManager
   blocks: BlocksManager
   storage: BlockStorage
@@ -48,6 +50,9 @@ export interface ApiContext {
 export interface CallMeta {
   /** the caller's project binding (socket door); absent = active project */
   projectId?: string
+  /** which door the call came through; user-consent methods (approval
+   * resolution, direct worktree create) only open from 'ipc' */
+  door?: 'ipc' | 'socket'
 }
 
 type Handler = (params: unknown, meta: CallMeta) => unknown
@@ -83,6 +88,19 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
     if (scope === 'global') return GLOBAL_SCOPE
     return optionalProject(meta)?.id ?? GLOBAL_SCOPE
   }
+
+  /** Approval decisions and other user-consent methods must come from the
+   * app UI — an agent must not be able to approve its own request */
+  const requireUserDoor = (meta: CallMeta): void => {
+    if (meta.door === 'socket') {
+      throw new Error('This method is only available to the app UI, not the socket API')
+    }
+  }
+
+  /** Explicit project override (the rail acts on background projects too),
+   * else the caller's binding / active project */
+  const projectOrBound = (projectId: string | undefined, meta: CallMeta): ProjectInfo =>
+    projectId ? ctx.projects.get(projectId) : requireProject(meta)
 
   const resolveInProject = (project: ProjectInfo, relPath: string): string => {
     const abs = resolve(project.path, relPath)
@@ -162,10 +180,14 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
     },
 
     'terminal.create': (params, meta) => {
-      const { cwd, title } = z
-        .object({ cwd: z.string().optional(), title: z.string().optional() })
+      const { cwd, title, projectId } = z
+        .object({
+          cwd: z.string().optional(),
+          title: z.string().optional(),
+          projectId: z.string().optional()
+        })
         .parse(params ?? {})
-      const project = requireProject(meta)
+      const project = projectOrBound(projectId, meta)
       return ctx.terminals.create({
         projectId: project.id,
         cwd: cwd ? expandHome(cwd) : project.path,
@@ -286,13 +308,15 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
       return ctx.workers.requestFull(options, requireProject(meta))
     },
     'worker.pendingRequests': () => ctx.workers.pendingRequests(),
-    'worker.resolveRequest': (params) => {
+    'worker.resolveRequest': (params, meta) => {
+      requireUserDoor(meta)
       const decision = z
         .object({
           requestId: z.string(),
           approved: z.boolean(),
           mode: z.enum(['bypass', 'edits', 'manual']),
-          location: z.enum(['shared', 'worktree'])
+          location: z.enum(['shared', 'worktree']),
+          worktreeId: z.string().optional()
         })
         .parse(params)
       return ctx.workers.resolveRequest(decision)
@@ -332,6 +356,79 @@ export function buildApi(ctx: ApiContext): Record<string, Handler> {
     },
     'worker.stop': (params) => ctx.workers.stop(idParam.parse(params).id),
     'worker.close': (params) => ctx.workers.close(idParam.parse(params).id),
+
+    // worktrees are first-class (ADR-0011); git is the truth — list is a
+    // fresh scan. Create/remove are gated per ADR-0004: agents request and
+    // wait for the user's card; the UI's create dialog is itself consent.
+    'worktree.list': (params, meta) => {
+      const { projectId } = z.object({ projectId: z.string().optional() }).parse(params ?? {})
+      return ctx.worktrees.list(projectOrBound(projectId, meta))
+    },
+    'worktree.request': (params, meta) => {
+      const options = z
+        .object({
+          name: z.string().min(1),
+          count: z.number().int().min(1).max(8).default(1),
+          from: z.string().optional(),
+          reason: z.string().optional()
+        })
+        .parse(params)
+      return ctx.worktrees.requestCreate(options, requireProject(meta))
+    },
+    'worktree.requestRemove': (params, meta) => {
+      const { id, reason, projectId } = z
+        .object({
+          id: z.string().min(1),
+          reason: z.string().optional(),
+          projectId: z.string().optional()
+        })
+        .parse(params)
+      return ctx.worktrees.requestRemove({ idOrName: id, reason }, projectOrBound(projectId, meta))
+    },
+    // switch the user's view to a worktree context — UI door only (agents
+    // must not yank the user's workspace around)
+    'worktree.activate': (params, meta) => {
+      requireUserDoor(meta)
+      const { id, projectId } = z
+        .object({ id: z.string().min(1), projectId: z.string().optional() })
+        .parse(params)
+      return ctx.worktrees.activate(id, projectOrBound(projectId, meta))
+    },
+    'worktree.pendingRequests': () => ctx.worktrees.pendingRequests(),
+    'worktree.resolveRequest': (params, meta) => {
+      requireUserDoor(meta)
+      const decision = z
+        .object({
+          requestId: z.string(),
+          approved: z.boolean(),
+          deleteBranch: z.boolean().optional()
+        })
+        .parse(params)
+      return ctx.worktrees.resolveRequest(decision)
+    },
+    'worktree.create': (params, meta) => {
+      requireUserDoor(meta)
+      const { projectId, ...options } = z
+        .object({
+          name: z.string().min(1),
+          from: z.string().optional(),
+          bootstrapCmd: z.string().optional(),
+          projectId: z.string().optional()
+        })
+        .parse(params)
+      return ctx.worktrees.create(options, projectOrBound(projectId, meta))
+    },
+    // agents may read the remembered bootstrap command as their default
+    'worktree.bootstrapCmd': (params, meta) => {
+      const { projectId } = z.object({ projectId: z.string().optional() }).parse(params ?? {})
+      return { cmd: ctx.worktrees.bootstrapCmd(projectOrBound(projectId, meta).id) }
+    },
+    'worktree.setBootstrapCmd': (params, meta) => {
+      requireUserDoor(meta)
+      const { cmd } = z.object({ cmd: z.string() }).parse(params)
+      ctx.worktrees.setBootstrapCmd(requireProject(meta).id, cmd)
+      return { ok: true }
+    },
 
     // layout is data (ADR-0001); structural integrity checked by
     // LayoutManager. One tree per project — calls act on the caller's

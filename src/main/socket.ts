@@ -51,7 +51,10 @@ export function startSocketServer(api: Parameters<typeof dispatch>[0]): Server {
         }
         id = request.id ?? null
         if (typeof request.method !== 'string') throw new Error('Missing method')
-        const meta = typeof request.project === 'string' ? { projectId: request.project } : {}
+        const meta = {
+          door: 'socket' as const,
+          ...(typeof request.project === 'string' ? { projectId: request.project } : {})
+        }
         const result = await dispatch(api, request.method, request.params, meta)
         socket.write(JSON.stringify({ id, result: result ?? null }) + '\n')
       } catch (error) {

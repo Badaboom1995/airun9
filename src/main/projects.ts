@@ -43,8 +43,10 @@ export class ProjectManager extends EventEmitter {
     }
   }
 
-  /** Open (or re-activate) the project at path; dedupes by realpath */
-  open(path: string): ProjectInfo {
+  /** Open (or re-activate) the project at path; dedupes by realpath.
+   * With parentId the path opens as a child workspace — how a worktree
+   * becomes a context of its repo (ADR-0011) rather than a rail chip. */
+  open(path: string, parentId: string | null = null): ProjectInfo {
     if (!existsSync(path) || !statSync(path).isDirectory()) {
       throw new Error(`Not a directory: ${path}`)
     }
@@ -52,8 +54,11 @@ export class ProjectManager extends EventEmitter {
     const id = projectId(real)
     let project = this.projects.get(id)
     if (!project) {
-      project = { id, path: real, name: basename(real), parentId: null, createdAt: Date.now() }
+      project = { id, path: real, name: basename(real), parentId, createdAt: Date.now() }
       this.projects.set(id, project)
+    } else if (parentId && project.parentId !== parentId) {
+      // a folder opened top-level earlier turns out to be a worktree — adopt
+      project.parentId = parentId
     }
     this.activate(id)
     return project
@@ -61,6 +66,8 @@ export class ProjectManager extends EventEmitter {
 
   /** Close a project; the caller is responsible for killing its sessions */
   close(id: string): void {
+    // child workspaces (worktree contexts) die with their parent
+    for (const child of this.list().filter((p) => p.parentId === id)) this.close(child.id)
     const project = this.get(id)
     this.projects.delete(id)
     if (this.activeId === id) {

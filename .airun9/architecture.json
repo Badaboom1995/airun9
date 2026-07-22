@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-13T11:05:00Z",
+  "updatedAt": "2026-07-21T11:00:00Z",
   "groups": [
     {
       "id": "renderer",
@@ -25,7 +25,7 @@
       "title": "airun9 CLI",
       "path": "resources/bin/airun9",
       "group": "doors",
-      "loc": 269,
+      "loc": 393,
       "summary": "Agent door to the API: newline-delimited JSON-RPC over the Unix socket, injected into every managed terminal's PATH"
     },
     {
@@ -65,7 +65,7 @@
       "title": "API dispatcher",
       "path": "src/main/api.ts",
       "group": "main",
-      "loc": 250,
+      "loc": 621,
       "summary": "One dispatcher, many doors (ADR-0008): zod-validated methods served identically over IPC and the socket"
     },
     {
@@ -89,8 +89,16 @@
       "title": "WorkerManager",
       "path": "src/main/workers.ts",
       "group": "main",
-      "loc": 340,
+      "loc": 356,
       "summary": "Scout/full worker agents in terminals: approval flow, permission modes, git worktrees, keep-alive prompting, transcript results"
+    },
+    {
+      "id": "main/worktrees",
+      "title": "Worktree manager",
+      "path": "src/main/worktrees.ts",
+      "group": "main",
+      "loc": 424,
+      "summary": "First-class worktrees (ADR-0011): git-is-truth scans, gated create/remove with approval cards, .env copy, per-project bootstrap cmd"
     },
     {
       "id": "main/layout",
@@ -178,7 +186,7 @@
       "path": "src/renderer/src/components/blocks/registry.tsx",
       "group": "blocks",
       "loc": 48,
-      "summary": "Block type \u2192 component + config schema; layout items reference these"
+      "summary": "Block type → component + config schema; layout items reference these"
     },
     {
       "id": "blocks/terminal",
@@ -346,6 +354,20 @@
     {
       "from": "blocks/browser",
       "to": "renderer/api"
+    },
+    {
+      "from": "main/api",
+      "to": "main/worktrees"
+    },
+    {
+      "from": "main/workers",
+      "to": "main/worktrees",
+      "label": "worktree per worker"
+    },
+    {
+      "from": "main/worktrees",
+      "to": "main/terminals",
+      "label": "risk + cleanup"
     }
   ]
 }

@@ -32,6 +32,16 @@ You can spawn worker agents — each an interactive `claude` session in the curr
 
 Reach for workers when the user asks to parallelize, try multiple approaches ("run 3 workers, I'll pick the best"), or delegate tasks while you keep working. Spawn with `--wait` in a background shell, keep working, collect results when notified. Workers in `shared` location share the project directory — don't run overlapping edit tasks there; use worktrees.
 
+**Worktrees — isolated copies of the repo, first-class.**
+
+A project has several git worktrees; the main checkout is just the default one. Each worktree is a separate directory with its own branch — parallel work without stepping on the user's checkout. All mutations wait for the user's approval card in the app:
+
+- `airun9 worktree list` — every worktree (main first): name, path, branch, HEAD
+- `airun9 worktree request --name <task-name> [--count N] [--from <ref>] [--reason "..."]` — name it after the task (e.g. `auth-refactor`); it becomes branch `airun9/<name>` based on the project's current HEAD (or `--from`). Waits for approval; resolves with the new paths and the project's remembered `bootstrapCmd`.
+- `airun9 worktree remove <idOrName> [--reason "..."]` — the approval card shows the user what dies (uncommitted files, unmerged commits, live sessions) and lets them delete the branch too. Waits for the decision.
+
+A fresh worktree has the project's `.env*` files copied in, but no dependencies. YOU bootstrap it: open a terminal there (`airun9 terminal create --cwd <path>`) and run the install (the `bootstrapCmd` returned by create is the user's remembered suggestion — a good default). Don't remove worktrees with unmerged work unless the user asked; prefer asking them to review first.
+
 **Browser panes — open web pages in the IDE and verify your work visually.**
 
 `airun9 browser create --url http://localhost:5173 [--position right]` opens a browser pane the user sees; it returns the pane's `id`. All panes share one persistent profile (the user's logins), so treat pages as signed-in and don't log the user out. Primary loop for web work — look at what you built:

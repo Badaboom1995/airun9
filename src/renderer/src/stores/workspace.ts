@@ -7,7 +7,8 @@ import type {
   ProjectsState,
   TerminalInfo,
   WorkerInfo,
-  WorkerRequest
+  WorkerRequest,
+  WorktreeRequest
 } from '../../../shared/types'
 
 interface WorkspaceState {
@@ -22,6 +23,8 @@ interface WorkspaceState {
   workers: Record<string, WorkerInfo>
   /** pending full-worker approvals across all projects */
   workerRequests: WorkerRequest[]
+  /** pending worktree create/remove approvals across all projects */
+  worktreeRequests: WorktreeRequest[]
   /** the ACTIVE project's layout tree; background trees live in main */
   layout: LayoutNode | null
   blocks: BlockInfo[]
@@ -40,6 +43,9 @@ interface WorkspaceState {
   setWorkerRequests: (requests: WorkerRequest[]) => void
   upsertWorkerRequest: (request: WorkerRequest) => void
   removeWorkerRequest: (requestId: string) => void
+  setWorktreeRequests: (requests: WorktreeRequest[]) => void
+  upsertWorktreeRequest: (request: WorktreeRequest) => void
+  removeWorktreeRequest: (requestId: string) => void
   setBrowsers: (browsers: BrowserInfo[]) => void
   upsertBrowser: (info: BrowserInfo) => void
   removeBrowser: (id: string) => void
@@ -52,6 +58,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   browsers: [],
   workers: {},
   workerRequests: [],
+  worktreeRequests: [],
   layout: null,
   blocks: [],
   activeTerminalId: null,
@@ -126,6 +133,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   removeWorkerRequest: (requestId) =>
     set((state) => ({
       workerRequests: state.workerRequests.filter((r) => r.id !== requestId)
+    })),
+
+  setWorktreeRequests: (worktreeRequests) => set({ worktreeRequests }),
+
+  upsertWorktreeRequest: (request) =>
+    set((state) => ({
+      worktreeRequests: state.worktreeRequests.some((r) => r.id === request.id)
+        ? state.worktreeRequests
+        : [...state.worktreeRequests, request]
+    })),
+
+  removeWorktreeRequest: (requestId) =>
+    set((state) => ({
+      worktreeRequests: state.worktreeRequests.filter((r) => r.id !== requestId)
     })),
 
   setBrowsers: (browsers) => set({ browsers }),

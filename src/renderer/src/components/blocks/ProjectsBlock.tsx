@@ -1,6 +1,7 @@
 import { IconFolderOpen, IconPlus, IconX } from '@tabler/icons-react'
 import IconOrbit from '../icons/IconOrbit'
 import ApprovalCard from '../ApprovalCard'
+import WorktreeApprovalCard from '../WorktreeApprovalCard'
 import { api } from '../../lib/api'
 import { useWorkspaceStore } from '../../stores/workspace'
 
@@ -17,10 +18,19 @@ function ProjectsBlock(): React.JSX.Element {
   const terminals = useWorkspaceStore((s) => s.terminals)
   const workers = useWorkspaceStore((s) => s.workers)
   const requests = useWorkspaceStore((s) => s.workerRequests)
+  const worktreeRequests = useWorkspaceStore((s) => s.worktreeRequests)
 
   const openProject = async (): Promise<void> => {
     const target = await window.api.pickDirectory()
     if (target) await api.openProject(target).catch(console.error)
+  }
+
+  // worktree contexts are child projects; the board shows one card per
+  // repo with everything aggregated under it
+  const topLevel = projects.filter((p) => !p.parentId)
+  const rootOf = (id: string): string => {
+    const project = projects.find((p) => p.id === id)
+    return project?.parentId ?? id
   }
 
   return (
@@ -39,18 +49,22 @@ function ProjectsBlock(): React.JSX.Element {
         </button>
       </div>
 
-      {projects.length === 0 ? (
+      {topLevel.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-[12px] text-neutral-600">
           No projects open
         </div>
       ) : (
         <ul className="space-y-2">
-          {projects.map((project) => {
-            const active = project.id === activeProjectId
-            const termCount = terminals.filter((t) => t.projectId === project.id).length
-            const projectWorkers = Object.values(workers).filter((w) => w.projectId === project.id)
+          {topLevel.map((project) => {
+            const active = rootOf(activeProjectId ?? '') === project.id
+            const termCount = terminals.filter((t) => rootOf(t.projectId) === project.id).length
+            const projectWorkers = Object.values(workers).filter(
+              (w) => rootOf(w.projectId) === project.id
+            )
             const running = projectWorkers.filter((w) => w.status === 'running').length
-            const pending = requests.filter((r) => r.projectId === project.id)
+            const pending = requests.filter((r) => rootOf(r.projectId) === project.id)
+            const wtPending = worktreeRequests.filter((r) => rootOf(r.projectId) === project.id)
+            const pendingCount = pending.length + wtPending.length
 
             return (
               <li
@@ -86,7 +100,7 @@ function ProjectsBlock(): React.JSX.Element {
                     title="Close project (kills its sessions)"
                     onClick={(event) => {
                       event.stopPropagation()
-                      const risky = running > 0 || pending.length > 0
+                      const risky = running > 0 || pendingCount > 0
                       if (
                         !risky ||
                         window.confirm(
@@ -105,15 +119,20 @@ function ProjectsBlock(): React.JSX.Element {
                 </div>
 
                 {/* pending approvals are decidable right here, per project */}
-                {pending[0] && (
+                {(pending[0] || wtPending[0]) && (
                   <div
                     className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div className="mb-2 text-[11px] font-medium text-amber-300">
-                      Worker approval waiting{pending.length > 1 ? ` (1 of ${pending.length})` : ''}
+                      {pending[0] ? 'Worker' : 'Worktree'} approval waiting
+                      {pendingCount > 1 ? ` (1 of ${pendingCount})` : ''}
                     </div>
-                    <ApprovalCard key={pending[0].id} request={pending[0]} />
+                    {pending[0] ? (
+                      <ApprovalCard key={pending[0].id} request={pending[0]} />
+                    ) : (
+                      <WorktreeApprovalCard key={wtPending[0].id} request={wtPending[0]} />
+                    )}
                   </div>
                 )}
               </li>

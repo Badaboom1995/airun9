@@ -33,6 +33,15 @@
  *   airun9 terminal list|create|read
  *   airun9 terminal close <id>                         # close a terminal tab
  *
+ *   # git worktrees (first-class): a project has several; the main checkout
+ *   # is the default one. Create and remove both wait for the USER's
+ *   # approval card in the app (removal shows dirty/unmerged/live-session
+ *   # risk). Create resolves with paths + the project's bootstrap command
+ *   # suggestion — bootstrap the tree yourself (install deps) in a terminal.
+ *   airun9 worktree list
+ *   airun9 worktree request --name <task-name> [--count N] [--from <ref>] [--reason "..."]
+ *   airun9 worktree remove <idOrName> [--reason "..."]
+ *
  *   # embedded browser panes (shared persistent profile — the user's logins).
  *   # The primary agent loop: navigate to the dev server, screenshot, read
  *   # the page text and console, fix, reload.
@@ -263,6 +272,24 @@ async function main() {
     case 'terminal close':
       if (!id) fail('usage: airun9 terminal close <id>')
       return printResult(await call('terminal.close', { id }))
+    case 'worktree list':
+      return printResult(await call('worktree.list'))
+    case 'worktree request': {
+      if (!flags.name || flags.name === true) fail('worktree request requires --name <task-name>')
+      const params = { name: flags.name }
+      if (flags.count) params.count = Number(flags.count)
+      if (typeof flags.from === 'string') params.from = flags.from
+      if (typeof flags.reason === 'string') params.reason = flags.reason
+      process.stderr.write('airun9: waiting for the user to approve in AIRUN9…\n')
+      return printResult(await call('worktree.request', params))
+    }
+    case 'worktree remove': {
+      if (!id) fail('usage: airun9 worktree remove <idOrName> [--reason "..."]')
+      const params = { id }
+      if (typeof flags.reason === 'string') params.reason = flags.reason
+      process.stderr.write('airun9: waiting for the user to approve in AIRUN9…\n')
+      return printResult(await call('worktree.requestRemove', params))
+    }
     case 'browser create': {
       const params = {}
       if (typeof flags.url === 'string') params.url = flags.url
@@ -358,7 +385,7 @@ async function main() {
     default:
       fail(
         `unknown command "${positional.join(' ')}"\n` +
-          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | terminal list|create|read|close | browser create|list|get|navigate|back|forward|reload|screenshot|text|console|close | block list|open | layout get|set | memory search|sessions|messages|stats'
+          'commands: ping | project get | worker scout|request|wait|list|get|read|result|prompt|stop|close | worktree list|request|remove | terminal list|create|read|close | browser create|list|get|navigate|back|forward|reload|screenshot|text|console|close | block list|open | layout get|set | memory search|sessions|messages|stats'
       )
   }
 }
