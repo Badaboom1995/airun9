@@ -1,17 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type IPty } from 'node-pty'
-import { nanoid } from 'nanoid'
 import type {
   TerminalDataEvent,
   TerminalExitEvent,
   TerminalInfo,
   TerminalSnapshot
 } from '../shared/types'
-
-/** Max scrollback kept per terminal for snapshots and API reads */
-const SCROLLBACK_CHARS = 512 * 1024
-const DEFAULT_COLS = 80
-const DEFAULT_ROWS = 24
+import { PtydClient } from './ptyd'
 
 export interface CreateTerminalOptions {
   /** Project this terminal (and any agent inside it) is bound to */
@@ -24,141 +18,144 @@ export interface CreateTerminalOptions {
   workerId?: string
 }
 
-interface ManagedTerminal {
-  info: TerminalInfo
-  pty: IPty | null
-  buffer: string
-  seq: number
-}
-
 /**
- * Owns every PTY in the app. Lives in the main process for now; the
- * interface (create/attach-by-snapshot/read/write) is shaped so it can move
- * behind a detached daemon later (ADR-0005: the daemon boundary is the
- * future network boundary).
+ * Client to the PTY daemon, which owns every PTY so sessions survive IDE
+ * restarts (docs/plans/pty-daemon.md). Same surface the in-process
+ * TerminalManager had, with three honest asyncs:
+ *
+ * - list/get stay sync off a mirror of TerminalInfo, seeded by connect()
+ *   and maintained by the daemon's event stream
+ * - create/snapshot/read await the daemon (ids and scrollback live there)
+ * - write/resize/kill/close are fire-and-forget sends
  */
-export class TerminalManager extends EventEmitter {
-  private terminals = new Map<string, ManagedTerminal>()
+export class TerminalClient extends EventEmitter {
+  private mirror = new Map<string, TerminalInfo>()
+  private client: PtydClient
 
-  constructor(private baseEnv: () => Record<string, string>) {
+  constructor(
+    private baseEnv: () => Record<string, string>,
+    isDev: boolean
+  ) {
     super()
+    this.client = new PtydClient(isDev)
+
+    this.client.on('event', (event: string, payload: unknown) => {
+      switch (event) {
+        case 'created': {
+          const info = payload as TerminalInfo
+          this.mirror.set(info.id, info)
+          this.emit('created', info)
+          break
+        }
+        case 'data':
+          this.emit('data', payload as TerminalDataEvent)
+          break
+        case 'exit': {
+          const { id, exitCode } = payload as TerminalExitEvent
+          const info = this.mirror.get(id)
+          if (info) {
+            info.status = 'exited'
+            info.exitCode = exitCode
+          }
+          this.emit('exit', payload)
+          break
+        }
+        case 'closed': {
+          const { id } = payload as { id: string }
+          this.mirror.delete(id)
+          this.emit('closed', payload)
+          break
+        }
+      }
+    })
+
+    // Daemon crash takes its PTYs with it — reflect that instead of showing
+    // ghost terminals. The client is already respawning a fresh daemon.
+    this.client.on('disconnected', () => {
+      for (const info of this.mirror.values()) {
+        if (info.status !== 'exited') {
+          info.status = 'exited'
+          info.exitCode = -1
+          this.emit('exit', { id: info.id, exitCode: -1 } satisfies TerminalExitEvent)
+        }
+      }
+    })
+    this.client.on('reconnected', () => void this.seed())
   }
 
-  create(options: CreateTerminalOptions): TerminalInfo {
-    const id = `term_${nanoid(10)}`
-    const shell = process.env.SHELL || '/bin/zsh'
-    // -i so rc files run and tools like claude resolve from the user's PATH
-    const args = options.command ? ['-ilc', options.command] : ['-il']
+  /** Adopt-or-spawn the daemon and load its live sessions. Await before use. */
+  async connect(): Promise<void> {
+    await this.client.ensure()
+    await this.seed()
+  }
 
-    const pty = spawn(shell, args, {
-      name: 'xterm-256color',
-      cols: DEFAULT_COLS,
-      rows: DEFAULT_ROWS,
-      cwd: options.cwd,
-      env: {
-        ...process.env,
-        ...this.baseEnv(),
-        ...options.env,
-        // per-terminal binding: the airun9 CLI sends these with every
-        // request, so agents always operate on THEIR project, regardless
-        // of which project the user is currently looking at
-        AIRUN9_PROJECT_ID: options.projectId,
-        AIRUN9_TERMINAL_ID: id,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor'
-      } as Record<string, string>
-    })
+  private async seed(): Promise<void> {
+    const live = (await this.client.request('terminal.list')) as TerminalInfo[]
+    for (const info of live) this.mirror.set(info.id, info)
+  }
 
-    const info: TerminalInfo = {
-      id,
-      projectId: options.projectId,
-      title: options.title ?? `Terminal ${this.terminals.size + 1}`,
-      cwd: options.cwd,
-      cols: DEFAULT_COLS,
-      rows: DEFAULT_ROWS,
-      status: 'running',
-      exitCode: null,
-      workerId: options.workerId ?? null,
-      createdAt: Date.now()
-    }
-
-    const managed: ManagedTerminal = { info, pty, buffer: '', seq: 0 }
-    this.terminals.set(id, managed)
-
-    pty.onData((data) => {
-      managed.seq += data.length
-      managed.buffer = (managed.buffer + data).slice(-SCROLLBACK_CHARS)
-      const event: TerminalDataEvent = { id, data, seq: managed.seq }
-      this.emit('data', event)
-    })
-
-    pty.onExit(({ exitCode }) => {
-      managed.info.status = 'exited'
-      managed.info.exitCode = exitCode
-      managed.pty = null
-      const event: TerminalExitEvent = { id, exitCode }
-      this.emit('exit', event)
-    })
-
-    this.emit('created', info)
+  async create(options: CreateTerminalOptions): Promise<TerminalInfo> {
+    const info = (await this.client.request('terminal.create', {
+      ...options,
+      env: { ...this.baseEnv(), ...options.env }
+    })) as TerminalInfo
+    this.mirror.set(info.id, info)
     return info
   }
 
   list(projectId?: string): TerminalInfo[] {
-    const all = [...this.terminals.values()].map((t) => t.info)
+    const all = [...this.mirror.values()]
     return projectId ? all.filter((t) => t.projectId === projectId) : all
   }
 
   get(id: string): TerminalInfo {
-    return this.managed(id).info
+    const info = this.mirror.get(id)
+    if (!info) throw new Error(`Unknown terminal: ${id}`)
+    return info
   }
 
-  snapshot(id: string): TerminalSnapshot {
-    const t = this.managed(id)
-    return { info: t.info, data: t.buffer, seq: t.seq }
+  snapshot(id: string): Promise<TerminalSnapshot> {
+    return this.client.request('terminal.snapshot', { id }) as Promise<TerminalSnapshot>
   }
 
   /** Tail of the scrollback, for API consumers (agents reading output) */
-  read(id: string, tailChars = 20_000): { data: string; seq: number } {
-    const t = this.managed(id)
-    return { data: t.buffer.slice(-tailChars), seq: t.seq }
+  read(id: string, tailChars?: number): Promise<{ data: string; seq: number }> {
+    return this.client.request('terminal.read', { id, tail: tailChars }) as Promise<{
+      data: string
+      seq: number
+    }>
   }
 
   write(id: string, data: string): void {
-    const t = this.managed(id)
-    t.pty?.write(data)
+    this.client.send('terminal.write', { id, data })
   }
 
   resize(id: string, cols: number, rows: number): void {
-    const t = this.managed(id)
-    if (cols > 0 && rows > 0) {
-      t.info.cols = cols
-      t.info.rows = rows
-      t.pty?.resize(cols, rows)
+    const info = this.mirror.get(id)
+    if (info && cols > 0 && rows > 0) {
+      info.cols = cols
+      info.rows = rows
     }
+    this.client.send('terminal.resize', { id, cols, rows })
   }
 
   /** Kill the process (if running) and drop the terminal entirely */
   close(id: string): void {
-    const t = this.managed(id)
-    t.pty?.kill()
-    this.terminals.delete(id)
-    this.emit('closed', { id, projectId: t.info.projectId })
+    this.client.send('terminal.close', { id })
   }
 
   /** Kill the process but keep the terminal (worker stop) */
   kill(id: string): void {
-    this.managed(id).pty?.kill()
+    this.client.send('terminal.kill', { id })
   }
 
-  disposeAll(): void {
-    for (const t of this.terminals.values()) t.pty?.kill()
-    this.terminals.clear()
+  /** Dev quit (or a future "Quit Completely"): daemon and sessions stop. */
+  shutdownDaemon(): void {
+    this.client.shutdownDaemon()
   }
 
-  private managed(id: string): ManagedTerminal {
-    const t = this.terminals.get(id)
-    if (!t) throw new Error(`Unknown terminal: ${id}`)
-    return t
+  /** Prod quit: detach — daemon and agents keep running for the next launch. */
+  detach(): void {
+    this.client.disconnect()
   }
 }

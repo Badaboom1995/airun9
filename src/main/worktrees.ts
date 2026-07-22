@@ -15,7 +15,7 @@ import type {
   WorktreeRequest,
   WorktreeRequestDecision
 } from '../shared/types'
-import type { TerminalManager } from './terminals'
+import type { TerminalClient } from './terminals'
 import type { WorkerManager } from './workers'
 import type { ProjectManager } from './projects'
 import type { BlockStorage } from './storage'
@@ -56,7 +56,7 @@ export class WorktreeManager extends EventEmitter {
   private workers: WorkerManager | null = null
 
   constructor(
-    private terminals: TerminalManager,
+    private terminals: TerminalClient,
     private storage: BlockStorage,
     private projects: ProjectManager
   ) {

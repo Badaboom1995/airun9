@@ -5,7 +5,17 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          // the PTY daemon rides along as a second bundle; the supervisor
+          // (src/main/ptyd.ts) spawns out/main/daemon.js detached
+          daemon: resolve('src/daemon/index.ts')
+        }
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

@@ -9,7 +9,7 @@ import type {
   WorkerRequest,
   WorkerRequestDecision
 } from '../shared/types'
-import type { TerminalManager } from './terminals'
+import type { TerminalClient } from './terminals'
 import type { WorktreeManager } from './worktrees'
 import { ensureClaudeSettings, type ClaudeSettingsPaths } from './claude-settings'
 
@@ -65,7 +65,7 @@ export class WorkerManager extends EventEmitter {
   private settings: ClaudeSettingsPaths
 
   constructor(
-    private terminals: TerminalManager,
+    private terminals: TerminalClient,
     private worktrees: WorktreeManager,
     binDir: string
   ) {
@@ -269,7 +269,7 @@ export class WorkerManager extends EventEmitter {
     return worker
   }
 
-  read(id: string, tailChars?: number): { data: string; seq: number } {
+  read(id: string, tailChars?: number): Promise<{ data: string; seq: number }> {
     return this.terminals.read(this.get(id).terminalId, tailChars)
   }
 
@@ -321,7 +321,7 @@ export class WorkerManager extends EventEmitter {
       .filter(Boolean)
       .join(' ')
 
-    const terminal = this.terminals.create({
+    const terminal = await this.terminals.create({
       projectId: options.projectId,
       cwd: options.cwd,
       title: options.name,

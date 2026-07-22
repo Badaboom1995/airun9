@@ -11,7 +11,7 @@ import {
   type ProjectInfo
 } from '../shared/types'
 import type { BrowserManager } from './browser'
-import type { TerminalManager } from './terminals'
+import type { TerminalClient } from './terminals'
 import type { WorkerManager } from './workers'
 import type { WorktreeManager } from './worktrees'
 import type { LayoutManager } from './layout'
@@ -35,7 +35,7 @@ import type { MemoryManager } from './memory'
 
 export interface ApiContext {
   projects: ProjectManager
-  terminals: TerminalManager
+  terminals: TerminalClient
   browsers: BrowserManager
   workers: WorkerManager
   worktrees: WorktreeManager

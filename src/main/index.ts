@@ -3,7 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import type { ProjectInfo } from '../shared/types'
-import { TerminalManager } from './terminals'
+import { TerminalClient } from './terminals'
 import { BrowserManager } from './browser'
 import { WorkerManager } from './workers'
 import { WorktreeManager } from './worktrees'
@@ -31,13 +31,16 @@ const cliBinDir = is.dev
   ? join(app.getAppPath(), 'resources', 'bin')
   : join(process.resourcesPath, 'bin')
 
-const terminals = new TerminalManager(() => ({
-  AIRUN9_SOCKET: SOCKET_PATH,
-  // plain prepend for shells without a bootstrap; zsh gets the reliable
-  // ZDOTDIR route since user rc files often rebuild PATH and wipe this
-  PATH: `${cliBinDir}:${process.env.PATH ?? ''}`,
-  ...zshBootstrapEnv(cliBinDir)
-}))
+const terminals = new TerminalClient(
+  () => ({
+    AIRUN9_SOCKET: SOCKET_PATH,
+    // plain prepend for shells without a bootstrap; zsh gets the reliable
+    // ZDOTDIR route since user rc files often rebuild PATH and wipe this
+    PATH: `${cliBinDir}:${process.env.PATH ?? ''}`,
+    ...zshBootstrapEnv(cliBinDir)
+  }),
+  is.dev
+)
 const storage = new BlockStorage()
 const layout = new LayoutManager()
 const projects = new ProjectManager()
@@ -59,7 +62,9 @@ const blocks = new BlocksManager(
 // so launching with many projects doesn't boot a pile of idle shells.
 // Re-activating an already-adopted project is a no-op (sessions are live).
 let adoptingPanes = false
-function adoptPanes(project: ProjectInfo): void {
+async function adoptPanes(project: ProjectInfo): Promise<void> {
+  // with the PTY daemon, panes from the previous run usually ARE still live —
+  // reattachment is the no-op path; respawn remains the reboot fallback
   const liveTerminals = new Set(terminals.list().map((t) => t.id))
   const liveBrowsers = new Set(browsers.list().map((b) => b.id))
   adoptingPanes = true
@@ -67,7 +72,7 @@ function adoptPanes(project: ProjectInfo): void {
     for (const item of layout.items(project.id)) {
       try {
         if (item.block === 'terminal' && !liveTerminals.has(String(item.config.terminalId))) {
-          const info = terminals.create({ projectId: project.id, cwd: project.path })
+          const info = await terminals.create({ projectId: project.id, cwd: project.path })
           layout.updateItemConfig(project.id, item.id, { terminalId: info.id })
         } else if (item.block === 'browser' && !liveBrowsers.has(String(item.config.browserId))) {
           // pane configs carry the last URL (stamped on navigation below)
@@ -83,7 +88,7 @@ function adoptPanes(project: ProjectInfo): void {
     // a fresh (or all-closed) workspace starts with one terminal
     if (!layout.items(project.id).some((item) => item.block === 'terminal')) {
       adoptingPanes = false
-      terminals.create({ projectId: project.id, cwd: project.path })
+      await terminals.create({ projectId: project.id, cwd: project.path })
     }
   } finally {
     adoptingPanes = false
@@ -135,7 +140,7 @@ const memory = new MemoryManager()
 // sessions (its layout file survives for reopening the same folder)
 projects.on('activated', (project: ProjectInfo) => {
   architecture.watch(project.id, project.path)
-  adoptPanes(project)
+  void adoptPanes(project)
 })
 projects.on('closed', (project: ProjectInfo) => {
   workers.closeProject(project.id)
@@ -250,9 +255,17 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
+
+  // Adopt-or-spawn the PTY daemon before anything touches terminals —
+  // sessions from the previous run come back through this connection
+  try {
+    await terminals.connect()
+  } catch (error) {
+    console.error('[ptyd] daemon unavailable, terminals will not work:', error)
+  }
 
   nativeTheme.themeSource = 'dark'
 
@@ -286,7 +299,7 @@ app.whenReady().then(() => {
   // lazy launch restore: only the active project's panes respawn now;
   // background projects adopt on their first activation
   const restoredActive = projects.active()
-  if (restoredActive) adoptPanes(restoredActive)
+  if (restoredActive) await adoptPanes(restoredActive)
 
   createWindow()
 
@@ -301,7 +314,11 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
-  terminals.disposeAll()
+  // Prod: detach — the daemon keeps terminals and agents alive for the next
+  // launch. Dev: stop everything, or hot-reloads would leak stale-code
+  // daemons (AIRUN9_PTYD_PERSIST=1 opts dev into the prod behavior).
+  if (is.dev && process.env.AIRUN9_PTYD_PERSIST !== '1') terminals.shutdownDaemon()
+  else terminals.detach()
   blocks.dispose()
   layout.dispose()
   architecture.dispose()
