@@ -50,11 +50,16 @@ const worktrees = new WorktreeManager(terminals, storage, projects)
 const workers = new WorkerManager(terminals, worktrees, cliBinDir)
 // circular by nature: workers create worktrees, worktree removal stops workers
 worktrees.bindWorkers(workers)
+// Packaged, block compilation must run entirely outside app.asar: esbuild's
+// Go binary can't be spawned from the archive (spawn ENOTDIR — see
+// esbuild-env.ts) nor read react/react-dom out of it, so module sources come
+// from app.asar.unpacked (see asarUnpack in electron-builder.yml).
+const unpackedNodeModules = join(process.resourcesPath, 'app.asar.unpacked', 'node_modules')
 const blocks = new BlocksManager(
   is.dev
     ? join(app.getAppPath(), 'resources', 'block-sdk', 'index.ts')
     : join(process.resourcesPath, 'block-sdk', 'index.ts'),
-  join(app.getAppPath(), 'node_modules')
+  is.dev ? join(app.getAppPath(), 'node_modules') : unpackedNodeModules
 )
 
 // Restored layout panes reference dead sessions (PTYs and pages don't

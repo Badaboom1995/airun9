@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, watch, type FSWatcher
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { nanoid } from 'nanoid'
-import { build } from 'esbuild'
+import './esbuild-env'
 import type { BlockGrantRequest, BlockInfo, BlockManifest } from '../shared/types'
 
 export const BLOCKS_DIR = join(homedir(), '.airun9', 'blocks')
@@ -253,6 +253,10 @@ export class BlocksManager extends EventEmitter {
           )
         })
       `
+      // dynamic so esbuild loads after esbuild-env.ts has set
+      // ESBUILD_BINARY_PATH — a static import gets hoisted above it by the
+      // bundler and esbuild snapshots the variable at module load
+      const { build } = await import('esbuild')
       const result = await build({
         stdin: { contents: wrapper, resolveDir: dir, loader: 'tsx' },
         bundle: true,
