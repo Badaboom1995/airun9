@@ -1,5 +1,6 @@
 import { IconFolderOpen, IconGitBranch, IconTerminal2 } from '@tabler/icons-react'
 
+import { api } from '../lib/api'
 import SpaceShader from './SpaceShader'
 
 const actions = [
@@ -18,6 +19,17 @@ const recentProjects = [
 ]
 
 function Welcome(): React.JSX.Element {
+  const openProject = async (path?: string): Promise<void> => {
+    const target = path ?? (await window.api.pickDirectory())
+    if (!target) return
+    try {
+      // the project:changed broadcast updates the store and swaps the screen
+      await api.openProject(target)
+    } catch (error) {
+      console.error('Failed to open project:', error)
+    }
+  }
+
   return (
     <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[#0b0e0c] text-neutral-200 antialiased">
       <SpaceShader />
@@ -38,6 +50,7 @@ function Welcome(): React.JSX.Element {
               key={label}
               type="button"
               className="flex h-[76px] flex-col items-start justify-between rounded-xl border border-white/10 bg-white/[0.04] p-3.5 text-left backdrop-blur-[3px] transition-colors hover:bg-white/[0.08] focus-visible:bg-white/[0.08] focus-visible:outline-none"
+              onClick={label === 'Open project' ? () => void openProject() : undefined}
             >
               <Icon className="size-[18px] text-neutral-400" stroke={1.75} />
               <span className="text-[13px] text-neutral-200">{label}</span>
@@ -62,6 +75,7 @@ function Welcome(): React.JSX.Element {
                 <button
                   type="button"
                   className="flex w-full items-baseline justify-between rounded-md px-1 py-[5px] text-left transition-colors hover:bg-white/[0.05] focus-visible:bg-white/[0.05] focus-visible:outline-none"
+                  onClick={() => void openProject(path)}
                 >
                   <span className="text-[13px] text-neutral-200">{name}</span>
                   <span className="text-xs text-neutral-500">{path}</span>

@@ -4,3 +4,7 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+# build/tool artifacts
+*.tsbuildinfo
+__pycache__/

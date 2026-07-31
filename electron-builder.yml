@@ -9,11 +9,24 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+extraResources:
+  - from: resources/bin
+    to: bin
+  - from: resources/block-sdk
+    to: block-sdk
 asarUnpack:
   - resources/**
   - '**/node_modules/node-pty/**'
   - '**/node_modules/better-sqlite3/**'
   - '**/node_modules/@parcel/watcher/**'
+  # block compilation: esbuild is a Go binary that reads sources from the real
+  # filesystem — it can neither be spawned from inside app.asar nor read
+  # react/react-dom out of it
+  - '**/node_modules/esbuild/**'
+  - '**/node_modules/@esbuild/**'
+  - '**/node_modules/react/**'
+  - '**/node_modules/react-dom/**'
+  - '**/node_modules/scheduler/**'
 win:
   executableName: agentic-ide
 nsis:

@@ -1,0 +1,373 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-21T11:00:00Z",
+  "groups": [
+    {
+      "id": "renderer",
+      "title": "Renderer"
+    },
+    {
+      "id": "doors",
+      "title": "Doors"
+    },
+    {
+      "id": "blocks",
+      "title": "Blocks"
+    },
+    {
+      "id": "main",
+      "title": "Main process"
+    }
+  ],
+  "modules": [
+    {
+      "id": "doors/cli",
+      "title": "airun9 CLI",
+      "path": "resources/bin/airun9",
+      "group": "doors",
+      "loc": 393,
+      "summary": "Agent door to the API: newline-delimited JSON-RPC over the Unix socket, injected into every managed terminal's PATH"
+    },
+    {
+      "id": "doors/preload",
+      "title": "Preload bridge",
+      "path": "src/preload/index.ts",
+      "group": "doors",
+      "loc": 44,
+      "summary": "Renderer door: exposes rpc() and push-event subscription as window.api"
+    },
+    {
+      "id": "doors/arch-scan",
+      "title": "Arch scanner CLI",
+      "path": "resources/bin/airun9-arch-scan",
+      "group": "doors",
+      "loc": 398,
+      "summary": "Mechanical architecture scanner for Python projects: emits modules/LOC/import-edge JSON in this schema for agents to curate"
+    },
+    {
+      "id": "doors/block-sdk",
+      "title": "Block SDK",
+      "path": "resources/block-sdk/index.ts",
+      "group": "doors",
+      "loc": 91,
+      "summary": "Custom-block door: rpc/on/storage over postMessage from the sandboxed iframe"
+    },
+    {
+      "id": "main/index",
+      "title": "App entry",
+      "path": "src/main/index.ts",
+      "group": "main",
+      "loc": 205,
+      "summary": "Wires managers, builds the API, broadcasts events, serves airun9-block:// documents"
+    },
+    {
+      "id": "main/api",
+      "title": "API dispatcher",
+      "path": "src/main/api.ts",
+      "group": "main",
+      "loc": 621,
+      "summary": "One dispatcher, many doors (ADR-0008): zod-validated methods served identically over IPC and the socket"
+    },
+    {
+      "id": "main/socket",
+      "title": "Socket server",
+      "path": "src/main/socket.ts",
+      "group": "main",
+      "loc": 67,
+      "summary": "Unix socket (~/.airun9/airun9.sock) speaking JSON-RPC to agents"
+    },
+    {
+      "id": "main/terminals",
+      "title": "TerminalManager",
+      "path": "src/main/terminals.ts",
+      "group": "main",
+      "loc": 155,
+      "summary": "PTY lifecycle with seq-numbered scrollback for lossless replay"
+    },
+    {
+      "id": "main/workers",
+      "title": "WorkerManager",
+      "path": "src/main/workers.ts",
+      "group": "main",
+      "loc": 356,
+      "summary": "Scout/full worker agents in terminals: approval flow, permission modes, git worktrees, keep-alive prompting, transcript results"
+    },
+    {
+      "id": "main/worktrees",
+      "title": "Worktree manager",
+      "path": "src/main/worktrees.ts",
+      "group": "main",
+      "loc": 424,
+      "summary": "First-class worktrees (ADR-0011): git-is-truth scans, gated create/remove with approval cards, .env copy, per-project bootstrap cmd"
+    },
+    {
+      "id": "main/layout",
+      "title": "LayoutManager",
+      "path": "src/main/layout.ts",
+      "group": "main",
+      "loc": 225,
+      "summary": "Owns the split/tabs layout tree (ADR-0001); validates structure on set"
+    },
+    {
+      "id": "main/blocks",
+      "title": "BlocksManager",
+      "path": "src/main/blocks.ts",
+      "group": "main",
+      "loc": 256,
+      "summary": "Watches ~/.airun9/blocks, compiles custom blocks with esbuild, enforces the capability grant model (ADR-0004)"
+    },
+    {
+      "id": "main/storage",
+      "title": "BlockStorage",
+      "path": "src/main/storage.ts",
+      "group": "main",
+      "loc": 67,
+      "summary": "Per-block key-value persistence (sandboxed iframes have no localStorage)"
+    },
+    {
+      "id": "main/architecture",
+      "title": "ArchitectureManager",
+      "path": "src/main/architecture.ts",
+      "group": "main",
+      "loc": 75,
+      "summary": "Watches the project's .airun9/architecture.json and pushes changes to the architecture block"
+    },
+    {
+      "id": "shared/types",
+      "title": "Shared contracts",
+      "path": "src/shared/types.ts",
+      "group": "main",
+      "loc": 233,
+      "summary": "Types and event channels every door speaks"
+    },
+    {
+      "id": "renderer/workspace",
+      "title": "Workspace",
+      "path": "src/renderer/src/components/Workspace.tsx",
+      "group": "renderer",
+      "loc": 88,
+      "summary": "Root shell: subscribes to all push events, hydrates the store, hosts modals"
+    },
+    {
+      "id": "renderer/layout-renderer",
+      "title": "LayoutRenderer",
+      "path": "src/renderer/src/components/LayoutRenderer.tsx",
+      "group": "renderer",
+      "loc": 197,
+      "summary": "Renders the layout tree: splits with draggable ratios, tab groups"
+    },
+    {
+      "id": "renderer/pane-host",
+      "title": "PaneHost",
+      "path": "src/renderer/src/components/PaneHost.tsx",
+      "group": "renderer",
+      "loc": 50,
+      "summary": "Instantiates a layout item's block from the registry with validated config"
+    },
+    {
+      "id": "renderer/store",
+      "title": "Workspace store",
+      "path": "src/renderer/src/stores/workspace.ts",
+      "group": "renderer",
+      "loc": 90,
+      "summary": "Zustand store mirroring main's state (terminals, workers, layout, blocks)"
+    },
+    {
+      "id": "renderer/api",
+      "title": "Renderer API client",
+      "path": "src/renderer/src/lib/api.ts",
+      "group": "renderer",
+      "loc": 94,
+      "summary": "Typed wrappers over the preload bridge: api.* calls and events.* subscriptions"
+    },
+    {
+      "id": "blocks/registry",
+      "title": "Block registry",
+      "path": "src/renderer/src/components/blocks/registry.tsx",
+      "group": "blocks",
+      "loc": 48,
+      "summary": "Block type → component + config schema; layout items reference these"
+    },
+    {
+      "id": "blocks/terminal",
+      "title": "Terminal block",
+      "path": "src/renderer/src/components/TerminalView.tsx",
+      "group": "blocks",
+      "loc": 160,
+      "summary": "xterm.js pane with snapshot+seq replay, WebGL renderer, keyboard fixes"
+    },
+    {
+      "id": "blocks/workers",
+      "title": "Workers block",
+      "path": "src/renderer/src/components/blocks/WorkersBlock.tsx",
+      "group": "blocks",
+      "loc": 84,
+      "summary": "Built-in live status board for worker agents"
+    },
+    {
+      "id": "blocks/architecture",
+      "title": "Architecture block",
+      "path": "src/renderer/src/components/blocks/ArchitectureBlock.tsx",
+      "group": "blocks",
+      "loc": 432,
+      "summary": "Built-in schema view: this map, rendered from .airun9/architecture.json; zoomable/pannable canvas"
+    },
+    {
+      "id": "blocks/custom-host",
+      "title": "CustomBlockHost",
+      "path": "src/renderer/src/components/blocks/CustomBlockHost.tsx",
+      "group": "blocks",
+      "loc": 141,
+      "summary": "Sandboxed null-origin iframe host for compiled custom blocks; proxies SDK rpc/events with capability checks"
+    },
+    {
+      "id": "main/browser",
+      "title": "Browser manager",
+      "path": "src/main/browser.ts",
+      "group": "main",
+      "loc": 249,
+      "summary": "Embedded browser sessions: shared persistent profile, Chrome UA, adopts webview guests; agents drive pages via browser.*"
+    },
+    {
+      "id": "blocks/browser",
+      "title": "Browser block",
+      "path": "src/renderer/src/components/blocks/BrowserBlock.tsx",
+      "group": "blocks",
+      "loc": 172,
+      "summary": "Toolbar + <webview> pane; every action goes through the same browser.* API agents use"
+    }
+  ],
+  "edges": [
+    {
+      "from": "doors/cli",
+      "to": "main/socket",
+      "label": "JSON-RPC"
+    },
+    {
+      "from": "doors/arch-scan",
+      "to": "main/architecture",
+      "label": "emits schema JSON"
+    },
+    {
+      "from": "doors/preload",
+      "to": "main/api",
+      "label": "IPC rpc"
+    },
+    {
+      "from": "doors/block-sdk",
+      "to": "blocks/custom-host",
+      "label": "postMessage"
+    },
+    {
+      "from": "main/socket",
+      "to": "main/api"
+    },
+    {
+      "from": "main/index",
+      "to": "main/api",
+      "label": "builds + wires"
+    },
+    {
+      "from": "main/api",
+      "to": "main/terminals"
+    },
+    {
+      "from": "main/api",
+      "to": "main/workers"
+    },
+    {
+      "from": "main/api",
+      "to": "main/layout"
+    },
+    {
+      "from": "main/api",
+      "to": "main/blocks"
+    },
+    {
+      "from": "main/api",
+      "to": "main/storage"
+    },
+    {
+      "from": "main/api",
+      "to": "main/architecture"
+    },
+    {
+      "from": "main/workers",
+      "to": "main/terminals",
+      "label": "owns PTYs"
+    },
+    {
+      "from": "main/terminals",
+      "to": "main/layout",
+      "label": "panes follow PTYs"
+    },
+    {
+      "from": "renderer/api",
+      "to": "doors/preload"
+    },
+    {
+      "from": "renderer/workspace",
+      "to": "renderer/store"
+    },
+    {
+      "from": "renderer/workspace",
+      "to": "renderer/layout-renderer"
+    },
+    {
+      "from": "renderer/layout-renderer",
+      "to": "renderer/pane-host"
+    },
+    {
+      "from": "renderer/pane-host",
+      "to": "blocks/registry"
+    },
+    {
+      "from": "blocks/registry",
+      "to": "blocks/terminal"
+    },
+    {
+      "from": "blocks/registry",
+      "to": "blocks/workers"
+    },
+    {
+      "from": "blocks/registry",
+      "to": "blocks/architecture"
+    },
+    {
+      "from": "blocks/registry",
+      "to": "blocks/custom-host"
+    },
+    {
+      "from": "blocks/custom-host",
+      "to": "main/blocks",
+      "label": "bundle + grants"
+    },
+    {
+      "from": "main/index",
+      "to": "main/browser",
+      "label": "wires lifecycle"
+    },
+    {
+      "from": "main/api",
+      "to": "main/browser"
+    },
+    {
+      "from": "blocks/browser",
+      "to": "renderer/api"
+    },
+    {
+      "from": "main/api",
+      "to": "main/worktrees"
+    },
+    {
+      "from": "main/workers",
+      "to": "main/worktrees",
+      "label": "worktree per worker"
+    },
+    {
+      "from": "main/worktrees",
+      "to": "main/terminals",
+      "label": "risk + cleanup"
+    }
+  ]
+}
